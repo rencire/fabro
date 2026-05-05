@@ -686,6 +686,13 @@ impl Client {
         Ok(response.into_inner())
     }
 
+    pub async fn get_system_repair_runs(&self) -> Result<types::SystemRepairRunsResponse> {
+        let response = self
+            .send_api(|client| async move { client.get_system_repair_runs().send().await })
+            .await?;
+        Ok(response.into_inner())
+    }
+
     pub async fn prune_runs(
         &self,
         body: types::PruneRunsRequest,

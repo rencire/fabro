@@ -21,6 +21,29 @@ async fn remove_from(args: &RunsRemoveArgs, ctx: &CommandContext) -> Result<()> 
     let mut errors = Vec::new();
 
     for identifier in &args.runs {
+        if args.force {
+            if let Ok(run_id) = identifier.parse::<fabro_types::RunId>() {
+                let run_id_string = run_id.to_string();
+                if let Err(err) = delete_server_run(client, &run_id, true).await {
+                    let error = err.to_string();
+                    if !json {
+                        fabro_util::printerr!(printer, "error: {identifier}: {error}");
+                    }
+                    errors.push(serde_json::json!({
+                        "identifier": identifier,
+                        "error": error,
+                    }));
+                    had_errors = true;
+                    continue;
+                }
+                removed.push(run_id_string.clone());
+                if !json {
+                    fabro_util::printerr!(printer, "{}", short_run_id(&run_id_string));
+                }
+                continue;
+            }
+        }
+
         let run = match client.resolve_run(identifier).await {
             Ok(run) => run,
             Err(err) => {

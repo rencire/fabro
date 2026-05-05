@@ -152,35 +152,6 @@ fn rm_force_removes_active_run() {
     let context = test_context!();
     let run_id = unique_run_id();
     let server = MockServer::start();
-    let resolve_mock = server.mock(|when, then| {
-        when.method("GET")
-            .path("/api/v1/runs/resolve")
-            .query_param("selector", &run_id);
-        then.status(200)
-            .header("Content-Type", "application/json")
-            .body(
-                serde_json::json!({
-                    "run_id": run_id,
-                    "workflow_name": "Active Workflow",
-                    "workflow_slug": "active-workflow",
-                    "goal": "Active goal",
-                    "title": "Active goal",
-                    "labels": {},
-                    "source_directory": null,
-                    "repository": { "name": "unknown" },
-                    "start_time": "2026-04-05T12:00:00Z",
-                    "created_at": "2026-04-05T12:00:00Z",
-                    "status": {
-                        "kind": "running"
-                    },
-                    "pending_control": null,
-                    "duration_ms": 123,
-                    "elapsed_secs": 0,
-                    "total_usd_micros": null
-                })
-                .to_string(),
-            );
-    });
     let delete_mock = server.mock(|when, then| {
         when.method("DELETE")
             .path(format!("/api/v1/runs/{run_id}"))
@@ -203,7 +174,6 @@ fn rm_force_removes_active_run() {
     ----- stderr -----
     [ULID]
     ");
-    resolve_mock.assert();
     delete_mock.assert();
 }
 

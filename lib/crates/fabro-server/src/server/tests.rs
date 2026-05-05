@@ -2038,6 +2038,43 @@ url = "http://127.0.0.1:32276"
 }
 
 #[tokio::test]
+async fn system_repair_runs_lists_catalog_entries_without_projection() {
+    let state = test_app_state();
+    let app = crate::test_support::build_test_router(Arc::clone(&state));
+    let run_id = RunId::new();
+    state
+        .store
+        .catalog_index()
+        .await
+        .unwrap()
+        .add(&run_id)
+        .await
+        .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(api("/system/repair/runs"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = response_json!(response, StatusCode::OK).await;
+    assert_eq!(body["total_count"], 1);
+    assert_eq!(body["runs"][0]["run_id"], run_id.to_string());
+    let created_at = body["runs"][0]["created_at"]
+        .as_str()
+        .unwrap()
+        .parse::<chrono::DateTime<Utc>>()
+        .unwrap();
+    assert_eq!(created_at, run_id.created_at());
+    assert_eq!(body["runs"][0]["error"], "run has no events");
+}
+
+#[tokio::test]
 async fn create_run_response_omits_web_url_when_web_disabled() {
     let state = test_app_state_with_options(
         server_settings_from_toml(

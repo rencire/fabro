@@ -773,6 +773,24 @@ pub(crate) struct SystemEventsArgs {
 }
 
 #[derive(Args)]
+pub(crate) struct SystemRepairArgs {
+    #[command(subcommand)]
+    pub(crate) command: SystemRepairCommand,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum SystemRepairCommand {
+    /// List runs that cannot be loaded from durable storage
+    Runs(SystemRepairRunsArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct SystemRepairRunsArgs {
+    #[command(flatten)]
+    pub(crate) connection: ServerConnectionArgs,
+}
+
+#[derive(Args)]
 pub(crate) struct SettingsArgs {
     #[command(flatten)]
     pub(crate) target: ServerTargetArgs,
@@ -1212,6 +1230,9 @@ impl Commands {
                 SystemCommand::Prune(_) => "system prune",
                 SystemCommand::Df(_) => "system df",
                 SystemCommand::Events(_) => "system events",
+                SystemCommand::Repair(args) => match &args.command {
+                    SystemRepairCommand::Runs(_) => "system repair runs",
+                },
             },
             Self::SendAnalytics { .. } => "__send_analytics",
             Self::SendPanic { .. } => "__send_panic",
@@ -1373,6 +1394,8 @@ pub(crate) enum SystemCommand {
     Df(DfArgs),
     /// Stream run events from the server
     Events(SystemEventsArgs),
+    /// Inspect and repair durable server data
+    Repair(SystemRepairArgs),
 }
 
 #[derive(Args)]

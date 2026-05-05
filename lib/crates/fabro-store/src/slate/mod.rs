@@ -13,6 +13,7 @@ use std::time::Duration;
 pub use auth_codes::{AuthCode, AuthCodeStore};
 pub use auth_tokens::{ConsumeOutcome, RefreshToken, RefreshTokenStore};
 pub use blob_store::{Blob, BlobStore};
+use chrono::{DateTime, Utc};
 use fabro_types::{RunId, RunSummary};
 use object_store::ObjectStore;
 pub use projection_cache::CachedRunProjection;
@@ -25,6 +26,13 @@ use tokio::sync::{Mutex, OnceCell};
 use tracing::warn;
 
 use crate::{Error, ListRunsQuery, Result, RunProjection, keys};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnreadableRun {
+    pub run_id:     RunId,
+    pub created_at: DateTime<Utc>,
+    pub error:      String,
+}
 
 #[derive(Clone)]
 pub struct Database {
@@ -240,6 +248,38 @@ impl Database {
     ) -> Result<Vec<CachedRunProjection>> {
         self.warm_projection_cache().await?;
         Ok(self.projection_cache.list(query).await)
+    }
+
+    pub async fn list_unreadable_runs(&self) -> Result<Vec<UnreadableRun>> {
+        let db = self.open_db().await?;
+        let run_ids = self
+            .catalog_index()
+            .await?
+            .list(&ListRunsQuery::default())
+            .await?;
+        let mut unreadable = Vec::new();
+        for run_id in run_ids {
+            match RunDatabase::build_cached_projection(&db, &run_id).await {
+                Ok(Some(_)) => {}
+                Ok(None) => unreadable.push(UnreadableRun {
+                    run_id,
+                    created_at: run_id.created_at(),
+                    error: "run has no events".to_string(),
+                }),
+                Err(err) => unreadable.push(UnreadableRun {
+                    run_id,
+                    created_at: run_id.created_at(),
+                    error: err.to_string(),
+                }),
+            }
+        }
+        unreadable.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.run_id.cmp(&left.run_id))
+        });
+        Ok(unreadable)
     }
 
     pub async fn get_cached_run(&self, run_id: &RunId) -> Result<Option<CachedRunProjection>> {
@@ -819,6 +859,63 @@ mod tests {
                 .is_none()
         );
         assert!(reopened.runs().find(&bad_run_id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn list_unreadable_runs_reports_catalog_entries_that_fail_projection() {
+        let (object_store, store) = make_store();
+        let good_run = store.create_run(&test_run_id("run-1")).await.unwrap();
+        append_completed(&good_run, "run-1", dt("2026-03-27T12:00:00Z")).await;
+
+        let bad_run_id = test_run_id("run-2");
+        store
+            .catalog_index()
+            .await
+            .unwrap()
+            .add(&bad_run_id)
+            .await
+            .unwrap();
+        let mut run_spec = serde_json::to_value(sample_run_spec("run-2")).unwrap();
+        let run_settings = run_spec
+            .get_mut("settings")
+            .and_then(|settings| settings.get_mut("run"))
+            .and_then(serde_json::Value::as_object_mut)
+            .unwrap();
+        run_settings.remove("integrations");
+        let db = store.open_db().await.unwrap();
+        db.put(
+            keys::run_event_key(&bad_run_id, 1, 0),
+            serde_json::to_vec(&serde_json::json!({
+                "id": "evt-run-2-run.created",
+                "ts": "2026-03-27T12:00:10Z",
+                "run_id": bad_run_id,
+                "event": "run.created",
+                "properties": {
+                    "settings": run_spec["settings"],
+                    "graph": run_spec["graph"],
+                    "workflow_slug": run_spec["workflow_slug"],
+                    "source_directory": run_spec["source_directory"],
+                    "run_dir": "/tmp/run-2",
+                    "git": run_spec["git"],
+                    "labels": run_spec["labels"],
+                },
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let reopened = Database::new(object_store, "runs", Duration::from_millis(1), None);
+        let unreadable = reopened.list_unreadable_runs().await.unwrap();
+
+        assert_eq!(unreadable.len(), 1);
+        assert_eq!(unreadable[0].run_id, bad_run_id);
+        assert_eq!(unreadable[0].created_at, bad_run_id.created_at());
+        assert!(
+            unreadable[0].error.contains("missing field `integrations`"),
+            "expected missing integrations error, got: {}",
+            unreadable[0].error
+        );
     }
 
     #[tokio::test]

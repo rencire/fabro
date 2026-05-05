@@ -758,6 +758,20 @@ pub(crate) async fn get_system_disk_usage(
         .into_response()
 }
 
+pub(crate) async fn get_system_repair_runs(
+    _auth: RequiredUser,
+    State(_state): State<Arc<AppState>>,
+) -> Response {
+    (
+        StatusCode::OK,
+        Json(json!({
+            "runs": [],
+            "total_count": 0
+        })),
+    )
+        .into_response()
+}
+
 pub(crate) async fn prune_runs(
     _auth: RequiredUser,
     State(_state): State<Arc<AppState>>,

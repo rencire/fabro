@@ -286,6 +286,8 @@ export * from './success-reason';
 export * from './system-actor-kind';
 export * from './system-features';
 export * from './system-info-response';
+export * from './system-repair-run-issue';
+export * from './system-repair-runs-response';
 export * from './system-run-counts';
 export * from './teams-integration-settings';
 export * from './terminal-status';

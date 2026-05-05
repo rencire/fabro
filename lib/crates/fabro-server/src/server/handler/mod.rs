@@ -104,6 +104,7 @@ pub(super) fn demo_routes() -> Router<Arc<AppState>> {
         .route("/settings", get(demo::get_server_settings))
         .route("/system/info", get(demo::get_system_info))
         .route("/system/df", get(demo::get_system_disk_usage))
+        .route("/system/repair/runs", get(demo::get_system_repair_runs))
         .route("/system/prune/runs", post(demo::prune_runs))
         .route("/billing", get(demo::get_aggregate_billing))
         .merge(runs::manifest_routes())

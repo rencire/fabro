@@ -15,10 +15,16 @@
 
 // May contain unused imports in some cases
 // @ts-ignore
-import type { RunIntegrationsGithubSettings } from './run-integrations-github-settings';
+import type { SystemRepairRunIssue } from './system-repair-run-issue';
 
-export interface RunIntegrationsSettings {
-    'github': RunIntegrationsGithubSettings;
+/**
+ * Runs that need manual repair or deletion because they cannot be loaded.
+ */
+export interface SystemRepairRunsResponse {
+    'runs'?: Array<SystemRepairRunIssue>;
+    /**
+     * Count of run repair issues.
+     */
+    'total_count'?: number;
 }
-
 

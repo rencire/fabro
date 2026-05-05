@@ -24,7 +24,7 @@ pub use run_state::RunProjectionReducer;
 pub use serializable_projection::SerializableProjection;
 pub use slate::{
     AuthCode, AuthCodeStore, Blob, BlobStore, CachedRunProjection, ConsumeOutcome, Database,
-    RefreshToken, RefreshTokenStore, RunCatalogIndex, RunDatabase, Runs,
+    RefreshToken, RefreshTokenStore, RunCatalogIndex, RunDatabase, Runs, UnreadableRun,
 };
 pub use types::EventPayload;
 
