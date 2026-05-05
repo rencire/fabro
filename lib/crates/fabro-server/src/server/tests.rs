@@ -5008,6 +5008,184 @@ async fn get_run_state_exposes_pending_interviews() {
 }
 
 #[tokio::test]
+async fn cache_backed_run_endpoints_reflect_events_appended_after_warmup() {
+    let state = test_app_state();
+    let app = crate::test_support::build_test_router(Arc::clone(&state));
+    let run_id = create_run(&app, MINIMAL_DOT)
+        .await
+        .parse::<RunId>()
+        .unwrap();
+
+    state.store.warm_projection_cache().await.unwrap();
+
+    let run_store = state.store.open_run(&run_id).await.unwrap();
+    workflow_event::append_event(&run_store, &run_id, &workflow_event::Event::RunStarting)
+        .await
+        .unwrap();
+    workflow_event::append_event(&run_store, &run_id, &workflow_event::Event::RunRunning)
+        .await
+        .unwrap();
+    append_scoped_stage_event(
+        &state,
+        run_id,
+        "review",
+        1,
+        &workflow_event::Event::StageStarted {
+            node_id:      "review".to_string(),
+            name:         "Review".to_string(),
+            index:        0,
+            handler_type: "human".to_string(),
+            attempt:      1,
+            max_attempts: 1,
+        },
+    )
+    .await;
+    append_raw_run_event(
+        &state,
+        run_id,
+        "cache-question",
+        "2026-04-19T12:00:00Z",
+        "interview.started",
+        json!({
+            "question_id": "q-cache",
+            "question": "Approve cached deploy?",
+            "stage": "review",
+            "question_type": "yes_no",
+            "options": [],
+            "allow_freeform": false,
+            "context_display": null,
+            "timeout_seconds": null,
+        }),
+        Some("review"),
+    )
+    .await;
+    append_raw_run_event(
+        &state,
+        run_id,
+        "cache-checkpoint",
+        "2026-04-19T12:00:01Z",
+        "checkpoint.completed",
+        json!({
+            "status": "running",
+            "current_node": "review",
+            "completed_nodes": [],
+            "node_retries": {},
+            "context_values": {},
+            "node_outcomes": {},
+            "next_node_id": "review",
+            "git_commit_sha": "cache-sha",
+            "loop_failure_signatures": {},
+            "restart_failure_signatures": {},
+            "node_visits": { "review": 1 },
+        }),
+        Some("review"),
+    )
+    .await;
+
+    let status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(api(&format!("/runs/{run_id}")))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response_json!(status, StatusCode::OK).await;
+    assert_eq!(status["status"]["kind"].as_str(), Some("running"));
+
+    let state_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(api(&format!("/runs/{run_id}/state")))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let state_body = response_json!(state_response, StatusCode::OK).await;
+    assert_eq!(
+        state_body["pending_interviews"]["q-cache"]["question"]["text"].as_str(),
+        Some("Approve cached deploy?")
+    );
+
+    let stages = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(api(&format!("/runs/{run_id}/stages")))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let stages = response_json!(stages, StatusCode::OK).await;
+    assert_eq!(stages["data"][0]["id"].as_str(), Some("review@1"));
+
+    let questions = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(api(&format!("/runs/{run_id}/questions")))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let questions = response_json!(questions, StatusCode::OK).await;
+    assert_eq!(
+        questions["data"][0]["text"].as_str(),
+        Some("Approve cached deploy?")
+    );
+
+    let settings = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(api(&format!("/runs/{run_id}/settings")))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_status!(settings, StatusCode::OK).await;
+
+    let checkpoint = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(api(&format!("/runs/{run_id}/checkpoint")))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let checkpoint = response_json!(checkpoint, StatusCode::OK).await;
+    assert_eq!(checkpoint["git_commit_sha"].as_str(), Some("cache-sha"));
+
+    let billing = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(api(&format!("/runs/{run_id}/billing")))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let billing = response_json!(billing, StatusCode::OK).await;
+    assert_eq!(billing["stages"][0]["stage"]["id"].as_str(), Some("review"));
+}
+
+#[tokio::test]
 async fn get_run_state_includes_provenance_from_user_agent() {
     let state = test_app_state();
     let app = crate::test_support::build_test_router(Arc::clone(&state));

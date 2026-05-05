@@ -2414,26 +2414,16 @@ async fn load_pending_interview(
     run_id: RunId,
     qid: &str,
 ) -> Result<LoadedPendingInterview, Response> {
-    let run_store = match state.store.open_run_reader(&run_id).await {
-        Ok(run_store) => run_store,
-        Err(fabro_store::Error::RunNotFound(_)) => {
-            return Err(ApiError::not_found("Run not found.").into_response());
-        }
+    let cached = match state.store.get_cached_run(&run_id).await {
+        Ok(Some(cached)) => cached,
+        Ok(None) => return Err(ApiError::not_found("Run not found.").into_response()),
         Err(err) => {
             return Err(
                 ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
             );
         }
     };
-    let run_state = match run_store.state().await {
-        Ok(run_state) => run_state,
-        Err(err) => {
-            return Err(
-                ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-            );
-        }
-    };
-    let Some(record) = run_state.pending_interviews.get(qid) else {
+    let Some(record) = cached.projection.pending_interviews.get(qid) else {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             "Question no longer exists or was already answered.",

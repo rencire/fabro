@@ -28,16 +28,15 @@ async fn list_run_stages(
         Err(response) => return response,
     };
 
-    let Ok(run_store) = state.store.open_run_reader(&id).await else {
-        return ApiError::not_found("Run not found.").into_response();
-    };
-    let projection = match run_store.state().await {
-        Ok(state) => state,
+    let cached = match state.store.get_cached_run(&id).await {
+        Ok(Some(cached)) => cached,
+        Ok(None) => return ApiError::not_found("Run not found.").into_response(),
         Err(err) => {
             return ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
                 .into_response();
         }
     };
+    let projection = cached.projection;
 
     let now = Utc::now();
     let stages = projection
@@ -61,20 +60,15 @@ async fn get_run_billing(
     State(state): State<Arc<AppState>>,
     Path(id): Path<RunId>,
 ) -> Response {
-    let run_store = match state.store.open_run_reader(&id).await {
-        Ok(run_store) => run_store,
-        Err(err) => {
-            return ApiError::new(StatusCode::NOT_FOUND, err.to_string()).into_response();
-        }
-    };
-
-    let projection = match run_store.state().await {
-        Ok(state) => state,
+    let cached = match state.store.get_cached_run(&id).await {
+        Ok(Some(cached)) => cached,
+        Ok(None) => return ApiError::not_found("Run not found.").into_response(),
         Err(err) => {
             return ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
                 .into_response();
         }
     };
+    let projection = cached.projection;
 
     let rollup = fabro_workflow::billing_rollup_from_projection(&projection);
     let by_model = rollup

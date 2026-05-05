@@ -1,6 +1,7 @@
 mod auth_codes;
 mod auth_tokens;
 mod blob_store;
+mod projection_cache;
 mod run_catalog_index;
 mod run_store;
 
@@ -14,27 +15,31 @@ pub use auth_tokens::{ConsumeOutcome, RefreshToken, RefreshTokenStore};
 pub use blob_store::{Blob, BlobStore};
 use fabro_types::{RunId, RunSummary};
 use object_store::ObjectStore;
+pub use projection_cache::CachedRunProjection;
+use projection_cache::RunProjectionCache;
 pub use run_catalog_index::RunCatalogIndex;
 pub use run_store::RunDatabase;
 use run_store::RunDatabaseInner;
 use slatedb::config::{CompressionCodec, Settings};
 use tokio::sync::{Mutex, OnceCell};
+use tracing::warn;
 
-use crate::run_state::build_summary;
 use crate::{Error, ListRunsQuery, Result, RunProjection, keys};
 
 #[derive(Clone)]
 pub struct Database {
-    object_store:   Arc<dyn ObjectStore>,
-    base_prefix:    String,
+    object_store: Arc<dyn ObjectStore>,
+    base_prefix: String,
     flush_interval: Duration,
-    cache_path:     Option<PathBuf>,
-    db:             Arc<OnceCell<slatedb::Db>>,
-    active_runs:    Arc<Mutex<HashMap<RunId, Arc<RunDatabaseInner>>>>,
-    blobs:          Arc<OnceCell<Arc<BlobStore>>>,
-    catalog_index:  Arc<OnceCell<Arc<RunCatalogIndex>>>,
-    auth_codes:     Arc<OnceCell<Arc<AuthCodeStore>>>,
+    cache_path: Option<PathBuf>,
+    db: Arc<OnceCell<slatedb::Db>>,
+    active_runs: Arc<Mutex<HashMap<RunId, Arc<RunDatabaseInner>>>>,
+    blobs: Arc<OnceCell<Arc<BlobStore>>>,
+    catalog_index: Arc<OnceCell<Arc<RunCatalogIndex>>>,
+    auth_codes: Arc<OnceCell<Arc<AuthCodeStore>>>,
     refresh_tokens: Arc<OnceCell<Arc<RefreshTokenStore>>>,
+    projection_cache: Arc<RunProjectionCache>,
+    projection_cache_warmed: Arc<OnceCell<()>>,
 }
 
 impl std::fmt::Debug for Database {
@@ -65,6 +70,8 @@ impl Database {
             catalog_index: Arc::new(OnceCell::new()),
             auth_codes: Arc::new(OnceCell::new()),
             refresh_tokens: Arc::new(OnceCell::new()),
+            projection_cache: Arc::new(RunProjectionCache::default()),
+            projection_cache_warmed: Arc::new(OnceCell::new()),
         }
     }
 
@@ -117,6 +124,7 @@ impl Database {
     }
 
     pub async fn create_run(&self, run_id: &RunId) -> Result<RunDatabase> {
+        self.warm_projection_cache().await?;
         let db = self.open_db().await?;
         let run_exists = RunDatabase::has_any_events(&db, run_id).await?;
 
@@ -133,12 +141,14 @@ impl Database {
         }
 
         self.catalog_index().await?.add(run_id).await?;
-        let run_store = RunDatabase::open_writer(*run_id, db).await?;
+        let run_store =
+            RunDatabase::open_writer(*run_id, db, Arc::clone(&self.projection_cache)).await?;
         self.cache_active_run(&run_store).await;
         Ok(run_store)
     }
 
     pub async fn open_run(&self, run_id: &RunId) -> Result<RunDatabase> {
+        self.warm_projection_cache().await?;
         let db = self.open_db().await?;
         if let Some(active) = self.get_active_run(run_id).await {
             if !active.matches_run(run_id) {
@@ -151,7 +161,8 @@ impl Database {
         if !RunDatabase::has_any_events(&db, run_id).await? {
             return Err(Error::RunNotFound(run_id.to_string()));
         }
-        let run_store = RunDatabase::open_writer(*run_id, db).await?;
+        let run_store =
+            RunDatabase::open_writer(*run_id, db, Arc::clone(&self.projection_cache)).await?;
         self.cache_active_run(&run_store).await;
         Ok(run_store)
     }
@@ -169,15 +180,15 @@ impl Database {
         if !RunDatabase::has_any_events(&db, run_id).await? {
             return Err(Error::RunNotFound(run_id.to_string()));
         }
-        RunDatabase::open_reader(*run_id, db).await
+        RunDatabase::open_reader(*run_id, db, Arc::clone(&self.projection_cache)).await
     }
 
     pub async fn list_runs(&self, query: &ListRunsQuery) -> Result<Vec<RunSummary>> {
         Ok(self
-            .list_runs_with_projection(query)
+            .list_cached_runs(query)
             .await?
             .into_iter()
-            .map(|(summary, _)| summary)
+            .map(|entry| entry.summary)
             .collect())
     }
 
@@ -185,22 +196,73 @@ impl Database {
         &self,
         query: &ListRunsQuery,
     ) -> Result<Vec<(RunSummary, RunProjection)>> {
-        let db = self.open_db().await?;
-        let run_ids = self.catalog_index().await?.list(query).await?;
-        let mut entries = Vec::new();
-        for run_id in run_ids {
-            if let Some(active) = self.get_active_run(&run_id).await {
-                let state = active.state().await?;
-                entries.push((build_summary(&state, &run_id), state));
-                continue;
-            }
-            if !RunDatabase::has_any_events(&db, &run_id).await? {
-                continue;
-            }
-            entries.push(RunDatabase::build_summary_with_projection(&db, &run_id).await?);
-        }
-        entries.sort_by_key(|(summary, _)| std::cmp::Reverse(summary.run_id.created_at()));
-        Ok(entries)
+        Ok(self
+            .list_cached_runs(query)
+            .await?
+            .into_iter()
+            .map(|entry| (entry.summary, (*entry.projection).clone()))
+            .collect())
+    }
+
+    pub async fn warm_projection_cache(&self) -> Result<()> {
+        self.projection_cache_warmed
+            .get_or_try_init(|| async {
+                let db = self.open_db().await?;
+                let run_ids = self
+                    .catalog_index()
+                    .await?
+                    .list(&ListRunsQuery::default())
+                    .await?;
+                let mut entries = Vec::new();
+                for run_id in run_ids {
+                    match RunDatabase::build_cached_projection(&db, &run_id).await {
+                        Ok(Some(entry)) => entries.push(entry),
+                        Ok(None) => {}
+                        Err(err) => {
+                            warn!(
+                                run_id = %run_id,
+                                error = %err,
+                                "Skipping run during projection cache warmup"
+                            );
+                        }
+                    }
+                }
+                self.projection_cache.replace_all(entries).await;
+                Ok::<_, Error>(())
+            })
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_cached_runs(
+        &self,
+        query: &ListRunsQuery,
+    ) -> Result<Vec<CachedRunProjection>> {
+        self.warm_projection_cache().await?;
+        Ok(self.projection_cache.list(query).await)
+    }
+
+    pub async fn get_cached_run(&self, run_id: &RunId) -> Result<Option<CachedRunProjection>> {
+        self.warm_projection_cache().await?;
+        Ok(self.projection_cache.get(run_id).await)
+    }
+
+    pub async fn get_cached_summary(&self, run_id: &RunId) -> Result<Option<RunSummary>> {
+        self.warm_projection_cache().await?;
+        Ok(self.projection_cache.get_summary(run_id).await)
+    }
+
+    pub(crate) async fn remove_cached_run(&self, run_id: &RunId) {
+        self.projection_cache.remove(run_id).await;
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn apply_cached_event(
+        &self,
+        run_id: &RunId,
+        event: &crate::EventEnvelope,
+    ) -> Result<()> {
+        self.projection_cache.apply_event(run_id, event).await
     }
 
     pub async fn delete_run(&self, run_id: &RunId) -> Result<()> {
@@ -223,6 +285,7 @@ impl Database {
             db.delete(key).await?;
         }
         self.catalog_index().await?.remove(run_id).await?;
+        self.remove_cached_run(run_id).await;
         Ok(())
     }
 
@@ -287,11 +350,7 @@ impl Runs {
     }
 
     pub async fn find(&self, run_id: &RunId) -> Result<Option<RunSummary>> {
-        match self.db.open_run_reader(run_id).await {
-            Ok(run_db) => Ok(Some(build_summary(&run_db.state().await?, run_id))),
-            Err(Error::RunNotFound(_)) => Ok(None),
-            Err(err) => Err(err),
-        }
+        self.db.get_cached_summary(run_id).await
     }
 
     pub async fn list(&self, query: &ListRunsQuery) -> Result<Vec<RunSummary>> {
@@ -314,15 +373,15 @@ pub(crate) fn normalize_base_prefix(prefix: String) -> String {
 mod tests {
     use chrono::{DateTime, Utc};
     use fabro_types::{
-        AttrValue, FailureReason, Graph, RunControlAction, RunSpec, RunStatus, SuccessReason,
-        WorkflowSettings,
+        AttrValue, FailureReason, Graph, RunControlAction, RunSpec, RunStatus, StageId,
+        SuccessReason, WorkflowSettings,
     };
     use futures::TryStreamExt;
     use object_store::memory::InMemory;
     use object_store::path::Path;
 
     use super::*;
-    use crate::EventPayload;
+    use crate::{EventPayload, keys};
 
     fn dt(value: &str) -> DateTime<Utc> {
         value.parse().unwrap()
@@ -341,6 +400,12 @@ mod tests {
                     .timestamp_millis()
                     .cast_unsigned(),
                 2,
+            ),
+            "run-3" => (
+                dt("2026-03-27T12:00:20Z")
+                    .timestamp_millis()
+                    .cast_unsigned(),
+                3,
             ),
             _ => panic!("unknown test run id: {label}"),
         };
@@ -392,12 +457,24 @@ mod tests {
         event: &str,
         properties: &serde_json::Value,
     ) -> EventPayload {
+        event_payload_with_node(run_id, ts, event, properties, None)
+    }
+
+    fn event_payload_with_node(
+        run_id: &str,
+        ts: &str,
+        event: &str,
+        properties: &serde_json::Value,
+        node_id: Option<&str>,
+    ) -> EventPayload {
         EventPayload::new(
             serde_json::json!({
                 "id": format!("evt-{run_id}-{event}"),
                 "ts": ts,
                 "run_id": test_run_id(run_id).to_string(),
                 "event": event,
+                "node_id": node_id,
+                "stage_id": node_id.map(|node| format!("{node}@1")),
                 "properties": properties,
             }),
             &test_run_id(run_id),
@@ -664,5 +741,232 @@ mod tests {
         assert_eq!(summary[0].status, RunStatus::Succeeded {
             reason: SuccessReason::Completed,
         });
+    }
+
+    #[tokio::test]
+    async fn projection_cache_warmup_lists_newest_first_and_applies_date_filters() {
+        let (object_store, store) = make_store();
+        let run_1 = store.create_run(&test_run_id("run-1")).await.unwrap();
+        let run_2 = store.create_run(&test_run_id("run-2")).await.unwrap();
+        append_completed(&run_1, "run-1", dt("2026-03-27T12:00:00Z")).await;
+        append_running(&run_2, "run-2", dt("2026-03-27T12:00:10Z")).await;
+
+        let reopened = Database::new(object_store, "runs", Duration::from_millis(1), None);
+        reopened.warm_projection_cache().await.unwrap();
+
+        let entries = reopened
+            .list_cached_runs(&ListRunsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            entries.iter().map(|entry| entry.run_id).collect::<Vec<_>>(),
+            vec![test_run_id("run-2"), test_run_id("run-1")]
+        );
+        assert_eq!(entries[0].summary.status, RunStatus::Running);
+        assert_eq!(
+            entries[0].projection.spec().unwrap().run_id,
+            test_run_id("run-2")
+        );
+        assert_eq!(entries[0].last_seq, 2);
+
+        let filtered = reopened
+            .list_cached_runs(&ListRunsQuery {
+                start: Some(test_run_id("run-2").created_at()),
+                end:   Some(test_run_id("run-2").created_at() + chrono::Duration::seconds(1)),
+            })
+            .await
+            .unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].run_id, test_run_id("run-2"));
+
+        let cached = reopened
+            .get_cached_run(&test_run_id("run-1"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(cached.summary.status, RunStatus::Succeeded {
+            reason: SuccessReason::Completed,
+        });
+    }
+
+    #[tokio::test]
+    async fn projection_cache_warmup_skips_unreplayable_catalog_run() {
+        let (object_store, store) = make_store();
+        let good_run = store.create_run(&test_run_id("run-1")).await.unwrap();
+        append_completed(&good_run, "run-1", dt("2026-03-27T12:00:00Z")).await;
+
+        let bad_run_id = test_run_id("run-2");
+        store
+            .catalog_index()
+            .await
+            .unwrap()
+            .add(&bad_run_id)
+            .await
+            .unwrap();
+        let db = store.open_db().await.unwrap();
+        db.put(
+            keys::run_event_key(&bad_run_id, 1, 0),
+            br#"{"not":"a valid run event"}"#,
+        )
+        .await
+        .unwrap();
+
+        let reopened = Database::new(object_store, "runs", Duration::from_millis(1), None);
+        reopened.warm_projection_cache().await.unwrap();
+
+        let entries = reopened
+            .list_cached_runs(&ListRunsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].run_id, test_run_id("run-1"));
+        assert!(
+            reopened
+                .get_cached_run(&bad_run_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(reopened.runs().find(&bad_run_id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn append_event_refreshes_projection_cache_and_delete_removes_it() {
+        let (_object_store, store) = make_store();
+        let run = store.create_run(&test_run_id("run-1")).await.unwrap();
+        append_created(&run, "run-1", dt("2026-03-27T12:00:00Z")).await;
+        store.warm_projection_cache().await.unwrap();
+
+        run.append_event(&event_payload(
+            "run-1",
+            "2026-03-27T12:00:01Z",
+            "run.running",
+            &serde_json::json!({}),
+        ))
+        .await
+        .unwrap();
+        run.append_event(&event_payload_with_node(
+            "run-1",
+            "2026-03-27T12:00:02Z",
+            "stage.started",
+            &serde_json::json!({
+                "index": 0,
+                "handler_type": "prompt",
+                "attempt": 1,
+                "max_attempts": 1,
+            }),
+            Some("review"),
+        ))
+        .await
+        .unwrap();
+        run.append_event(&event_payload_with_node(
+            "run-1",
+            "2026-03-27T12:00:03Z",
+            "interview.started",
+            &serde_json::json!({
+                "question_id": "q-1",
+                "question": "Approve deploy?",
+                "stage": "review",
+                "question_type": "yes_no",
+                "options": [],
+                "allow_freeform": false,
+                "context_display": null,
+                "timeout_seconds": null,
+            }),
+            Some("review"),
+        ))
+        .await
+        .unwrap();
+        run.append_event(&event_payload_with_node(
+            "run-1",
+            "2026-03-27T12:00:04Z",
+            "checkpoint.completed",
+            &serde_json::json!({
+                "status": "running",
+                "current_node": "review",
+                "completed_nodes": [],
+                "node_retries": {},
+                "context_values": {},
+                "node_outcomes": {},
+                "next_node_id": "review",
+                "git_commit_sha": "abc123",
+                "loop_failure_signatures": {},
+                "restart_failure_signatures": {},
+                "node_visits": { "review": 1 },
+            }),
+            Some("review"),
+        ))
+        .await
+        .unwrap();
+
+        let cached = store
+            .get_cached_run(&test_run_id("run-1"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(cached.summary.status, RunStatus::Running);
+        assert_eq!(cached.last_seq, 5);
+        assert_eq!(
+            cached
+                .projection
+                .stage(&StageId::new("review", 1))
+                .unwrap()
+                .effective_state(),
+            fabro_types::StageState::Running
+        );
+        assert_eq!(
+            cached.projection.pending_interviews["q-1"].question.text,
+            "Approve deploy?"
+        );
+        assert_eq!(
+            cached
+                .projection
+                .checkpoint
+                .as_ref()
+                .unwrap()
+                .git_commit_sha
+                .as_deref(),
+            Some("abc123")
+        );
+
+        let summaries = store.list_runs(&ListRunsQuery::default()).await.unwrap();
+        let projected = store
+            .list_runs_with_projection(&ListRunsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(summaries, vec![cached.summary.clone()]);
+        assert_eq!(projected[0].0, cached.summary);
+        assert_eq!(
+            projected[0]
+                .1
+                .checkpoint
+                .as_ref()
+                .unwrap()
+                .git_commit_sha
+                .as_deref(),
+            cached
+                .projection
+                .checkpoint
+                .as_ref()
+                .unwrap()
+                .git_commit_sha
+                .as_deref()
+        );
+
+        store.delete_run(&test_run_id("run-1")).await.unwrap();
+        assert!(
+            store
+                .get_cached_run(&test_run_id("run-1"))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .list_cached_runs(&ListRunsQuery::default())
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }

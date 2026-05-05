@@ -191,7 +191,7 @@ async fn list_board_runs(
 ) -> Response {
     let entries = match state
         .store
-        .list_runs_with_projection(&fabro_store::ListRunsQuery::default())
+        .list_cached_runs(&fabro_store::ListRunsQuery::default())
         .await
     {
         Ok(runs) => runs,
@@ -202,20 +202,20 @@ async fn list_board_runs(
     };
     let board_summaries: Vec<_> = entries
         .into_iter()
-        .filter_map(|(summary, projection)| {
-            let column = board_column(summary.status)?;
-            Some((summary, projection, column))
+        .filter_map(|entry| {
+            let column = board_column(entry.summary.status)?;
+            Some((entry, column))
         })
         .collect();
     let (page_summaries, has_more) = paginate_items(board_summaries, &pagination);
 
     let mut data = Vec::with_capacity(page_summaries.len());
-    for (summary, projection, column) in page_summaries {
+    for (entry, column) in page_summaries {
         let mut item =
-            serde_json::to_value(&summary).expect("RunSummary serialization is infallible");
+            serde_json::to_value(&entry.summary).expect("RunSummary serialization is infallible");
         item["column"] = serde_json::json!(column);
         if let Some(object) = item.as_object_mut() {
-            object.extend(board_run_metadata_from_projection(&projection));
+            object.extend(board_run_metadata_from_projection(&entry.projection));
         }
         data.push(item);
     }
@@ -237,13 +237,14 @@ async fn list_runs(
 ) -> Response {
     match state
         .store
-        .list_runs(&fabro_store::ListRunsQuery::default())
+        .list_cached_runs(&fabro_store::ListRunsQuery::default())
         .await
     {
-        Ok(runs) => {
+        Ok(entries) => {
             let include_archived = params.include_archived;
-            let items = runs
+            let items = entries
                 .into_iter()
+                .map(|entry| entry.summary)
                 .filter(|summary| {
                     include_archived || !matches!(summary.status, RunStatus::Archived { .. })
                 })
@@ -541,15 +542,9 @@ async fn get_run_status(
         Ok(id) => id,
         Err(response) => return response,
     };
-    match state
-        .store
-        .list_runs(&fabro_store::ListRunsQuery::default())
-        .await
-    {
-        Ok(runs) => match runs.into_iter().find(|run| run.run_id == id) {
-            Some(run) => (StatusCode::OK, Json(run)).into_response(),
-            None => ApiError::not_found("Run not found.").into_response(),
-        },
+    match state.store.get_cached_summary(&id).await {
+        Ok(Some(run)) => (StatusCode::OK, Json(run)).into_response(),
+        Ok(None) => ApiError::not_found("Run not found.").into_response(),
         Err(err) => {
             ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
         }
@@ -565,27 +560,18 @@ async fn get_run_settings(
         Ok(id) => id,
         Err(response) => return response,
     };
-    let run_store = match state.store.open_run_reader(&id).await {
-        Ok(store) => store,
-        Err(fabro_store::Error::RunNotFound(_)) => {
-            return ApiError::not_found("Run not found.").into_response();
-        }
+    let cached = match state.store.get_cached_run(&id).await {
+        Ok(Some(cached)) => cached,
+        Ok(None) => return ApiError::not_found("Run not found.").into_response(),
         Err(err) => {
             return ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
                 .into_response();
         }
     };
-    let run_state = match run_store.state().await {
-        Ok(state) => state,
-        Err(err) => {
-            return ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
-                .into_response();
-        }
-    };
-    let Some(run_spec) = run_state.spec else {
+    let Some(run_spec) = cached.projection.spec.as_ref() else {
         return ApiError::not_found("Run not found.").into_response();
     };
-    (StatusCode::OK, Json(run_spec.settings)).into_response()
+    (StatusCode::OK, Json(run_spec.settings.clone())).into_response()
 }
 
 async fn get_questions(
@@ -597,23 +583,17 @@ async fn get_questions(
         Ok(id) => id,
         Err(response) => return response,
     };
-    match state.store.open_run_reader(&id).await {
-        Ok(run_store) => match run_store.state().await {
-            Ok(run_state) => {
-                let questions = run_state
-                    .pending_interviews
-                    .values()
-                    .map(api_question_from_pending_interview)
-                    .collect::<Vec<_>>();
-                (StatusCode::OK, Json(ListResponse::new(questions))).into_response()
-            }
-            Err(err) => {
-                ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
-            }
-        },
-        Err(fabro_store::Error::RunNotFound(_)) => {
-            ApiError::not_found("Run not found.").into_response()
+    match state.store.get_cached_run(&id).await {
+        Ok(Some(cached)) => {
+            let questions = cached
+                .projection
+                .pending_interviews
+                .values()
+                .map(api_question_from_pending_interview)
+                .collect::<Vec<_>>();
+            (StatusCode::OK, Json(ListResponse::new(questions))).into_response()
         }
+        Ok(None) => ApiError::not_found("Run not found.").into_response(),
         Err(err) => {
             ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
         }
@@ -652,14 +632,12 @@ async fn get_run_state(
     RequireRunScoped(id): RequireRunScoped,
     State(state): State<Arc<AppState>>,
 ) -> Response {
-    match state.store.open_run_reader(&id).await {
-        Ok(run_store) => match run_store.state().await {
-            Ok(run_state) => Json(run_state).into_response(),
-            Err(err) => {
-                ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
-            }
-        },
-        Err(_) => ApiError::not_found("Run not found.").into_response(),
+    match state.store.get_cached_run(&id).await {
+        Ok(Some(cached)) => Json((*cached.projection).clone()).into_response(),
+        Ok(None) => ApiError::not_found("Run not found.").into_response(),
+        Err(err) => {
+            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
+        }
     }
 }
 

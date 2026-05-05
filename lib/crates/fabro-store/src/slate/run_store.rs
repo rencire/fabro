@@ -4,14 +4,16 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use bytes::Bytes;
 use chrono::Utc;
-use fabro_types::{RunBlobId, RunEvent, RunId, RunSummary};
+use fabro_types::{RunBlobId, RunEvent, RunId};
 use futures::Stream;
 use slatedb::{Db, DbRead};
 use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use tracing::warn;
 
 use super::blob_store::BlobStore;
-use crate::run_state::{EventProjectionCache, RunProjectionReducer, build_summary};
+use super::projection_cache::{CachedRunProjection, RunProjectionCache};
+use crate::run_state::{EventProjectionCache, RunProjectionReducer};
 use crate::{Error, EventEnvelope, EventPayload, Result, RunProjection, StageId, keys};
 
 const DEFAULT_EVENT_TAIL_LIMIT: usize = 1024;
@@ -31,28 +33,42 @@ impl std::fmt::Debug for RunDatabase {
 }
 
 pub(crate) struct RunDatabaseInner {
-    run_id:             RunId,
-    db:                 Db,
-    blob_store:         BlobStore,
-    event_seq:          AtomicU32,
-    close_lock:         Mutex<()>,
-    state_lock:         Mutex<()>,
-    projection_cache:   Mutex<EventProjectionCache>,
-    recent_events:      Mutex<VecDeque<EventEnvelope>>,
+    run_id: RunId,
+    db: Db,
+    blob_store: BlobStore,
+    event_seq: AtomicU32,
+    close_lock: Mutex<()>,
+    state_lock: Mutex<()>,
+    projection_cache: Mutex<EventProjectionCache>,
+    shared_projection_cache: Arc<RunProjectionCache>,
+    recent_events: Mutex<VecDeque<EventEnvelope>>,
     recent_event_limit: usize,
-    event_tx:           broadcast::Sender<EventEnvelope>,
+    event_tx: broadcast::Sender<EventEnvelope>,
 }
 
 impl RunDatabase {
-    pub(crate) async fn open_writer(run_id: RunId, db: Db) -> Result<Self> {
-        Self::build(run_id, db, false).await
+    pub(crate) async fn open_writer(
+        run_id: RunId,
+        db: Db,
+        shared_projection_cache: Arc<RunProjectionCache>,
+    ) -> Result<Self> {
+        Self::build(run_id, db, false, shared_projection_cache).await
     }
 
-    pub(crate) async fn open_reader(run_id: RunId, db: Db) -> Result<Self> {
-        Self::build(run_id, db, true).await
+    pub(crate) async fn open_reader(
+        run_id: RunId,
+        db: Db,
+        shared_projection_cache: Arc<RunProjectionCache>,
+    ) -> Result<Self> {
+        Self::build(run_id, db, true, shared_projection_cache).await
     }
 
-    async fn build(run_id: RunId, db: Db, read_only: bool) -> Result<Self> {
+    async fn build(
+        run_id: RunId,
+        db: Db,
+        read_only: bool,
+        shared_projection_cache: Arc<RunProjectionCache>,
+    ) -> Result<Self> {
         let event_seq =
             recover_next_seq(&db, keys::run_events_prefix(&run_id), keys::parse_event_seq).await?;
         let (event_tx, _) = broadcast::channel(DEFAULT_EVENT_TAIL_LIMIT.max(16));
@@ -66,6 +82,7 @@ impl RunDatabase {
                 close_lock: Mutex::new(()),
                 state_lock: Mutex::new(()),
                 projection_cache: Mutex::new(EventProjectionCache::default()),
+                shared_projection_cache,
                 recent_events: Mutex::new(VecDeque::with_capacity(DEFAULT_EVENT_TAIL_LIMIT)),
                 recent_event_limit: DEFAULT_EVENT_TAIL_LIMIT,
                 event_tx,
@@ -117,17 +134,21 @@ impl RunDatabase {
         Ok(iter.next().await?.is_some())
     }
 
-    pub(crate) async fn build_summary_with_projection<R>(
+    pub(crate) async fn build_cached_projection<R>(
         db: &R,
         run_id: &RunId,
-    ) -> Result<(RunSummary, RunProjection)>
+    ) -> Result<Option<CachedRunProjection>>
     where
         R: DbRead + Sync,
     {
         let events = list_events_from(db, run_id, 1).await?;
+        let Some(last_seq) = events.last().map(|event| event.seq) else {
+            return Ok(None);
+        };
         let state = RunProjection::apply_events(&events)?;
-        let summary = build_summary(&state, run_id);
-        Ok((summary, state))
+        Ok(Some(CachedRunProjection::from_projection(
+            *run_id, state, last_seq,
+        )))
     }
 
     async fn projected_state(&self) -> Result<RunProjection> {
@@ -199,6 +220,23 @@ impl RunDatabase {
             )
             .await?;
         self.cache_event(&event).await?;
+        if let Err(err) = self
+            .inner
+            .shared_projection_cache
+            .apply_event(&self.inner.run_id, &event)
+            .await
+        {
+            self.inner
+                .shared_projection_cache
+                .remove(&self.inner.run_id)
+                .await;
+            warn!(
+                run_id = %self.inner.run_id,
+                error = %err,
+                "Failed to update run projection cache after append"
+            );
+            return Err(err);
+        }
         Ok(seq)
     }
 
