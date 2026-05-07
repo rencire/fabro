@@ -807,8 +807,14 @@ export default function Runs() {
       initialColumns.flatMap((col: Column) => col.items.map((item: RunItem) => String(item.repo))),
     ),
   ].sort();
+  const allWorkflows = [
+    ...new Set(
+      initialColumns.flatMap((col: Column) => col.items.map((item: RunItem) => String(item.workflow))),
+    ),
+  ].sort();
   const [query, setQuery] = useState("");
   const [repoFilter, setRepoFilter] = useState("all");
+  const [workflowFilter, setWorkflowFilter] = useState("all");
   const [createdFilter, setCreatedFilter] = useState<CreatedFilter>("all");
   const [view, setView] = useState<ViewMode>("columns");
   const [columns, setColumns] = useState(initialColumns);
@@ -846,6 +852,7 @@ export default function Runs() {
     items: col.items.filter(
       (item) =>
         (repoFilter === "all" || item.repo === repoFilter) &&
+        (workflowFilter === "all" || item.workflow === workflowFilter) &&
         (createdCutoffMs == null ||
           (item.createdAt != null && Date.parse(item.createdAt) >= createdCutoffMs)) &&
         (!query ||
@@ -904,6 +911,21 @@ export default function Runs() {
               <option value="all">All repos</option>
               {allRepos.map((repo: string) => (
                 <option key={repo} value={repo}>{repo}</option>
+              ))}
+            </select>
+            <ChevronDownIcon className="pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 text-fg-muted" />
+          </div>
+          <div className="relative">
+            <select
+              name="workflow"
+              aria-label="Filter by workflow"
+              value={workflowFilter}
+              onChange={(e) => setWorkflowFilter(e.target.value)}
+              className="appearance-none rounded-md border border-line bg-panel/80 py-2 pl-3 pr-8 text-sm text-fg-2 outline-none transition-colors focus:border-focus focus:ring-0"
+            >
+              <option value="all">All workflows</option>
+              {allWorkflows.map((workflow: string) => (
+                <option key={workflow} value={workflow}>{workflow}</option>
               ))}
             </select>
             <ChevronDownIcon className="pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 text-fg-muted" />
