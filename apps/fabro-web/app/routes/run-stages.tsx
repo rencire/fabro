@@ -1,6 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
+import {
+  Listbox,
+  ListboxButton,
+  ListboxOption,
+  ListboxOptions,
+} from "@headlessui/react";
 import { XMarkIcon } from "@heroicons/react/24/outline";
+import {
+  CheckIcon,
+  ChevronUpDownIcon,
+  FunnelIcon,
+  MagnifyingGlassIcon,
+} from "@heroicons/react/16/solid";
 import { Marked } from "marked";
 
 import { StageSidebar } from "../components/stage-sidebar";
@@ -21,6 +33,16 @@ type TurnType =
   | { kind: "command"; ts: string; script: string; running: boolean; exitCode: number | null; durationMs: number };
 
 const STAGE_ACTIVITY_EVENT_SET = new Set<string>(STAGE_ACTIVITY_EVENT_TYPES);
+
+const EVENT_KINDS = ["system", "assistant", "tool", "command"] as const;
+type EventKind = (typeof EVENT_KINDS)[number];
+
+const EVENT_KIND_LABEL: Record<EventKind, string> = {
+  system: "System",
+  assistant: "Agent",
+  tool: "Tool",
+  command: "Command",
+};
 
 function assertNever(value: never): never {
   throw new Error(`Unhandled stage activity event type: ${value}`);
@@ -246,6 +268,18 @@ export function turnSummary(turn: TurnType): string {
       return humanizeToolName(turn.toolName);
     case "command":
       return oneLine(turn.script) || (turn.running ? "running…" : "");
+  }
+}
+
+export function searchableText(turn: TurnType): string {
+  switch (turn.kind) {
+    case "system":
+    case "assistant":
+      return turn.content;
+    case "tool":
+      return `${humanizeToolName(turn.toolName)} ${turn.toolName} ${turn.input} ${turn.result}`;
+    case "command":
+      return turn.script;
   }
 }
 
@@ -493,6 +527,131 @@ function EventDetailsPanel({
   );
 }
 
+function KindFilter({
+  selected,
+  onChange,
+}: {
+  selected: EventKind[];
+  onChange: (kinds: EventKind[]) => void;
+}) {
+  const summary = useMemo(() => {
+    if (selected.length === EVENT_KINDS.length) return "All types";
+    if (selected.length === 0) return "No types";
+    if (selected.length <= 2) {
+      return EVENT_KINDS.filter((k) => selected.includes(k))
+        .map((k) => EVENT_KIND_LABEL[k])
+        .join(", ");
+    }
+    return `${selected.length} types`;
+  }, [selected]);
+
+  return (
+    <Listbox value={selected} onChange={onChange} multiple>
+      <ListboxButton className="inline-flex items-center gap-2 rounded-md bg-panel px-2.5 py-1.5 text-xs text-fg-2 outline-1 -outline-offset-1 outline-line-strong transition-colors hover:bg-overlay-strong focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-teal-500">
+        <FunnelIcon className="size-3.5 text-fg-muted" aria-hidden="true" />
+        <span className="tabular-nums">{summary}</span>
+        <ChevronUpDownIcon className="size-3.5 text-fg-muted" aria-hidden="true" />
+      </ListboxButton>
+      <ListboxOptions
+        transition
+        anchor={{ to: "bottom start", gap: 4 }}
+        className="z-20 w-44 rounded-md bg-panel py-1 outline-1 -outline-offset-1 outline-line-strong transition data-closed:scale-95 data-closed:opacity-0 data-enter:duration-100 data-enter:ease-out data-leave:duration-75 data-leave:ease-in"
+      >
+        {EVENT_KINDS.map((kind) => (
+          <ListboxOption
+            key={kind}
+            value={kind}
+            className="group flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-xs text-fg-3 data-focus:bg-overlay data-focus:text-fg data-focus:outline-hidden"
+          >
+            <span className="flex size-3.5 items-center justify-center rounded-sm border border-line-strong bg-panel-alt group-data-selected:border-teal-500 group-data-selected:bg-teal-500">
+              <CheckIcon
+                className="size-2.5 text-on-primary opacity-0 group-data-selected:opacity-100"
+                aria-hidden="true"
+              />
+            </span>
+            <span>{EVENT_KIND_LABEL[kind]}</span>
+          </ListboxOption>
+        ))}
+      </ListboxOptions>
+    </Listbox>
+  );
+}
+
+function SearchInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="relative w-full max-w-sm min-w-48 flex-1">
+      <MagnifyingGlassIcon
+        className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-fg-muted"
+        aria-hidden="true"
+      />
+      <input
+        type="search"
+        name="event-search"
+        aria-label="Search events"
+        placeholder="Search events"
+        autoComplete="off"
+        spellCheck={false}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="block w-full rounded-md bg-panel py-1.5 pl-8 pr-2.5 text-xs text-fg outline-1 -outline-offset-1 outline-line-strong placeholder:text-fg-muted focus:outline-2 focus:-outline-offset-1 focus:outline-teal-500 max-sm:text-base/5"
+      />
+    </div>
+  );
+}
+
+function EventsToolbar({
+  selectedKinds,
+  onKindsChange,
+  search,
+  onSearchChange,
+  filteredCount,
+  totalCount,
+}: {
+  selectedKinds: EventKind[];
+  onKindsChange: (kinds: EventKind[]) => void;
+  search: string;
+  onSearchChange: (value: string) => void;
+  filteredCount: number;
+  totalCount: number;
+}) {
+  const allKindsSelected = selectedKinds.length === EVENT_KINDS.length;
+  const isFiltering = !allKindsSelected || search.length > 0;
+
+  function clearFilters() {
+    onKindsChange([...EVENT_KINDS]);
+    onSearchChange("");
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line pb-3">
+      <div className="flex flex-1 flex-wrap items-center gap-2">
+        <KindFilter selected={selectedKinds} onChange={onKindsChange} />
+        <SearchInput value={search} onChange={onSearchChange} />
+        {isFiltering && (
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="rounded px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg-2 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-teal-500"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      {isFiltering && totalCount > 0 && (
+        <span className="text-xs tabular-nums text-fg-muted">
+          {filteredCount.toLocaleString()} of {totalCount.toLocaleString()} events
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function RunStages() {
   const { id, stageId } = useParams();
   const runQuery = useRun(id);
@@ -518,6 +677,22 @@ export default function RunStages() {
     setOpenIndex(null);
   }, [selectedStageId]);
   const openTurn = openIndex != null ? turns[openIndex] ?? null : null;
+
+  const [selectedKinds, setSelectedKinds] = useState<EventKind[]>([
+    ...EVENT_KINDS,
+  ]);
+  const [search, setSearch] = useState("");
+  const filteredTurns = useMemo<{ turn: TurnType; index: number }[]>(() => {
+    const kindSet = new Set(selectedKinds);
+    const needle = search.toLowerCase();
+    const out: { turn: TurnType; index: number }[] = [];
+    turns.forEach((turn, i) => {
+      if (!kindSet.has(turn.kind)) return;
+      if (needle && !searchableText(turn).toLowerCase().includes(needle)) return;
+      out.push({ turn, index: i });
+    });
+    return out;
+  }, [turns, selectedKinds, search]);
 
   if (!id || !stages.length) {
     return (
@@ -545,16 +720,34 @@ export default function RunStages() {
         />
       </div>
 
-      <div className="min-w-0 flex-1 overflow-y-auto pb-6 pl-3 pt-6">
-        {turns.map((turn: TurnType, i: number) => (
-          <EventRow
-            key={`turn-${i}`}
-            turn={turn}
-            runStart={runStart}
-            selected={openIndex === i}
-            onSelect={() => setOpenIndex(i)}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col pl-3 pt-6">
+        <div className="shrink-0">
+          <EventsToolbar
+            selectedKinds={selectedKinds}
+            onKindsChange={setSelectedKinds}
+            search={search}
+            onSearchChange={setSearch}
+            filteredCount={filteredTurns.length}
+            totalCount={turns.length}
           />
-        ))}
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto pb-6 pt-2">
+          {turns.length > 0 && filteredTurns.length === 0 ? (
+            <div className="px-2 py-6 text-sm text-fg-muted">
+              No events match these filters.
+            </div>
+          ) : (
+            filteredTurns.map(({ turn, index }) => (
+              <EventRow
+                key={`turn-${index}`}
+                turn={turn}
+                runStart={runStart}
+                selected={openIndex === index}
+                onSelect={() => setOpenIndex(index)}
+              />
+            ))
+          )}
+        </div>
       </div>
 
       <EventDetailsPanel
