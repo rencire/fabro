@@ -111,6 +111,7 @@ export function eventsToActivity(events: EventEnvelope[], stageId: string): Turn
   const turns: TurnType[] = [];
   const pendingTools = new Map<string, PendingTool>();
   let pendingCommand: PendingCommand | undefined;
+  let sawAssistantMessage = false;
 
   for (const e of events) {
     const eventName = e.event;
@@ -128,6 +129,7 @@ export function eventsToActivity(events: EventEnvelope[], stageId: string): Turn
         turns.push({ kind: "system", ts: e.ts, content: getString(props, "text") ?? e.text ?? "" });
         break;
       case "agent.message": {
+        sawAssistantMessage = true;
         const msg = getString(props, "text") ?? e.text ?? "";
         if (msg) {
           const billing = (props.billing ?? {}) as UnknownRecord;
@@ -135,6 +137,19 @@ export function eventsToActivity(events: EventEnvelope[], stageId: string): Turn
             kind: "assistant",
             ts: e.ts,
             content: msg,
+            inputTokens: getNumber(billing, "input_tokens") ?? 0,
+            outputTokens: getNumber(billing, "output_tokens") ?? 0,
+          });
+        }
+        break;
+      }
+      case "prompt.completed": {
+        if (!sawAssistantMessage) {
+          const billing = (props.billing ?? {}) as UnknownRecord;
+          turns.push({
+            kind: "assistant",
+            ts: e.ts,
+            content: getString(props, "response") ?? "",
             inputTokens: getNumber(billing, "input_tokens") ?? 0,
             outputTokens: getNumber(billing, "output_tokens") ?? 0,
           });

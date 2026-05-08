@@ -226,6 +226,116 @@ describe("eventsToActivity", () => {
     ]);
   });
 
+  test("renders prompt.completed as an assistant turn for prompt-shape stages", () => {
+    const events: EventEnvelope[] = [
+      envelope(1, {
+        event: "stage.prompt",
+        stage_id: "summarize@1",
+        node_id: "summarize",
+        properties: { text: "summarize the diff" },
+      }),
+      envelope(2, {
+        event: "prompt.completed",
+        stage_id: "summarize@1",
+        node_id: "summarize",
+        properties: {
+          response: "Refactored auth module",
+          model: "claude-sonnet-4-6",
+          provider: "anthropic",
+          billing: { input_tokens: 120, output_tokens: 30 },
+        },
+      }),
+    ];
+
+    expect(eventsToActivity(events, "summarize@1")).toEqual([
+      {
+        kind: "system",
+        ts: "2026-04-09T12:00:00Z",
+        content: "summarize the diff",
+      },
+      {
+        kind: "assistant",
+        ts: "2026-04-09T12:00:00Z",
+        content: "Refactored auth module",
+        inputTokens: 120,
+        outputTokens: 30,
+      },
+    ]);
+  });
+
+  test("does not duplicate the assistant turn when prompt.completed follows agent.message", () => {
+    const events: EventEnvelope[] = [
+      envelope(1, {
+        event: "stage.prompt",
+        stage_id: "simplify@1",
+        node_id: "simplify",
+        properties: { text: "simplify" },
+      }),
+      envelope(2, {
+        event: "agent.message",
+        stage_id: "simplify@1",
+        node_id: "simplify",
+        properties: {
+          text: "Done.",
+          billing: { input_tokens: 10, output_tokens: 5 },
+        },
+      }),
+      envelope(3, {
+        event: "prompt.completed",
+        stage_id: "simplify@1",
+        node_id: "simplify",
+        properties: {
+          response: "Done.",
+          model: "claude-sonnet-4-6",
+          provider: "anthropic",
+          billing: { input_tokens: 10, output_tokens: 5 },
+        },
+      }),
+    ];
+
+    const turns = eventsToActivity(events, "simplify@1");
+    expect(turns).toEqual([
+      {
+        kind: "system",
+        ts: "2026-04-09T12:00:00Z",
+        content: "simplify",
+      },
+      {
+        kind: "assistant",
+        ts: "2026-04-09T12:00:00Z",
+        content: "Done.",
+        inputTokens: 10,
+        outputTokens: 5,
+      },
+    ]);
+  });
+
+  test("renders prompt.completed even with no preceding stage.prompt", () => {
+    const events: EventEnvelope[] = [
+      envelope(1, {
+        event: "prompt.completed",
+        stage_id: "summarize@1",
+        node_id: "summarize",
+        properties: {
+          response: "All clear.",
+          model: "claude-sonnet-4-6",
+          provider: "anthropic",
+          billing: { input_tokens: 0, output_tokens: 4 },
+        },
+      }),
+    ];
+
+    expect(eventsToActivity(events, "summarize@1")).toEqual([
+      {
+        kind: "assistant",
+        ts: "2026-04-09T12:00:00Z",
+        content: "All clear.",
+        inputTokens: 0,
+        outputTokens: 4,
+      },
+    ]);
+  });
+
   test("extractStageModel pulls model from agent.session.activated, ignoring other stages", () => {
     const events: EventEnvelope[] = [
       envelope(1, {

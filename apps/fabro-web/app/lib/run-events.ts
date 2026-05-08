@@ -64,6 +64,7 @@ const STAGE_EVENTS = new Set([
 // to run-scoped invalidations (stages list, graph, detail).
 export const STAGE_ACTIVITY_EVENT_TYPES = [
   "stage.prompt",
+  "prompt.completed",
   "agent.message",
   "agent.tool.started",
   "agent.tool.completed",
