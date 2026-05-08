@@ -237,14 +237,13 @@ export default function RunDetail({ params }: { params: { id: string } }) {
         )}
       >
         <Link to="/runs" className="text-fg-3 hover:text-fg">Runs</Link>
-        {demoMode && (
-          <>
-            <ChevronRightIcon className="size-3" />
-            <Link to={`/workflows/${run.workflow}`} className="text-fg-3 hover:text-fg">
-              {run.workflow}
-            </Link>
-          </>
-        )}
+        <ChevronRightIcon className="size-3" />
+        <Link
+          to={`/runs?workflow=${encodeURIComponent(run.workflow)}`}
+          className="text-fg-3 hover:text-fg"
+        >
+          {run.workflow}
+        </Link>
         <ChevronRightIcon className="size-3" />
         <span>{run.title}</span>
       </nav>
