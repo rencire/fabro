@@ -39,6 +39,12 @@ export const queryKeys = {
     graphSource: (id: string) => `/api/v1/runs/${pathSegment(id)}/graph/source`,
     settings: (id: string) => `/api/v1/runs/${pathSegment(id)}/settings`,
     logs: (id: string) => `/api/v1/runs/${pathSegment(id)}/logs`,
+    artifacts: (id: string) => `/api/v1/runs/${pathSegment(id)}/artifacts`,
+    artifactDownload: (id: string, stageId: string, filename: string, retry: number) =>
+      withQuery(
+        `/api/v1/runs/${pathSegment(id)}/stages/${pathSegment(stageId)}/artifacts/download`,
+        { filename, retry },
+      ),
     billing: (id: string) => `/api/v1/runs/${pathSegment(id)}/billing`,
     questions: (id: string, limit = 1, offset = 0) =>
       withQuery(`/api/v1/runs/${pathSegment(id)}/questions`, {

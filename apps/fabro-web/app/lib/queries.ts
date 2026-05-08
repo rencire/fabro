@@ -7,6 +7,7 @@ import type {
   PaginatedRunList,
   PaginatedRunStageList,
   CommandLogResponse,
+  RunArtifactListResponse,
   RunBilling,
   RunProjection,
   ServerSettings,
@@ -117,6 +118,13 @@ export function useRunLogs(id: string | undefined, refreshInterval?: number) {
     id ? queryKeys.runs.logs(id) : null,
     apiNullableTextFetcher,
     refreshInterval ? { refreshInterval } : undefined,
+  );
+}
+
+export function useRunArtifacts(id: string | undefined) {
+  return useSWR<RunArtifactListResponse | null>(
+    id ? queryKeys.runs.artifacts(id) : null,
+    apiNullableFetcher,
   );
 }
 

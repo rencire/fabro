@@ -18,6 +18,7 @@ import * as RunStages from "./routes/run-stages";
 import * as RunSettings from "./routes/run-settings";
 import * as RunSource from "./routes/run-source";
 import * as RunLogs from "./routes/run-logs";
+import * as RunArtifacts from "./routes/run-artifacts";
 import * as RunFiles from "./routes/run-files";
 import * as RunBilling from "./routes/run-billing";
 import * as Insights from "./routes/insights";
@@ -94,6 +95,7 @@ export const routes: RouteObject[] = [
               route("settings", RunSettings),
               route("source", RunSource),
               route("logs", RunLogs),
+              route("artifacts", RunArtifacts),
               route("files", RunFiles),
               route("billing", RunBilling),
             ],

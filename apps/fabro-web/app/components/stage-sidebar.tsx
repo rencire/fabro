@@ -9,7 +9,12 @@ import {
   PauseCircleIcon,
   XCircleIcon,
 } from "@heroicons/react/24/solid";
-import { Bars3BottomLeftIcon, DocumentTextIcon, MapIcon } from "@heroicons/react/24/outline";
+import {
+  Bars3BottomLeftIcon,
+  DocumentTextIcon,
+  MapIcon,
+  PaperClipIcon,
+} from "@heroicons/react/24/outline";
 import { formatDurationSecs } from "../lib/format";
 import { ACTIVE_STAGE_STATES, formatStageLabel } from "../lib/stage-sidebar";
 import { useTickingNow } from "../lib/time";
@@ -39,7 +44,7 @@ interface StageSidebarProps {
   stages: Stage[];
   runId: string;
   selectedStageId?: string;
-  activeLink?: "settings" | "source" | "logs";
+  activeLink?: "settings" | "source" | "logs" | "artifacts";
 }
 
 export function StageSidebar({ stages, runId, selectedStageId, activeLink }: StageSidebarProps) {
@@ -149,6 +154,19 @@ export function StageSidebar({ stages, runId, selectedStageId, activeLink }: Sta
             >
               <Bars3BottomLeftIcon className="size-4 shrink-0 text-fg-muted" />
               Run Logs
+            </Link>
+          </li>
+          <li>
+            <Link
+              to={`/runs/${runId}/artifacts`}
+              className={`${linkBase} ${
+                activeLink === "artifacts"
+                  ? "bg-overlay text-fg"
+                  : "text-fg-3 hover:bg-overlay hover:text-fg"
+              }`}
+            >
+              <PaperClipIcon className="size-4 shrink-0 text-fg-muted" />
+              Artifacts
             </Link>
           </li>
         </ul>
