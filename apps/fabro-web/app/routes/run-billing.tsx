@@ -22,7 +22,8 @@ function isInFlight(stage: RunBillingStage): boolean {
   return stage.state != null && IN_FLIGHT_STAGE_STATES.has(stage.state);
 }
 
-function hasBillableUsage(row: MappedStageRow): boolean {
+function isVisibleRow(row: MappedStageRow): boolean {
+  if (row.inFlight) return true;
   return (
     (row.inputTokens ?? 0) > 0 ||
     (row.outputTokens ?? 0) > 0 ||
@@ -37,6 +38,7 @@ interface MappedStageRow {
   outputTokens:   number | null;
   runtimeSecs:    number;
   totalUsdMicros: number | null | undefined;
+  inFlight:       boolean;
 }
 
 function liveRuntimeSecs(stage: RunBillingStage, now: number): number {
@@ -62,6 +64,7 @@ function mapStageRow(stage: RunBillingStage, runtimeSecs: number): MappedStageRo
       : null,
     runtimeSecs,
     totalUsdMicros: stage.billing.total_usd_micros,
+    inFlight:       isInFlight(stage),
   };
 }
 
@@ -144,7 +147,7 @@ export default function RunBilling({ params }: { params: { id: string } }) {
             </tr>
           </thead>
           <tbody>
-            {rows.filter(hasBillableUsage).map((row) => (
+            {rows.filter(isVisibleRow).map((row) => (
               <tr key={row.stage} className="border-b border-line last:border-b-0">
                 <td className="px-4 py-3 text-fg-2">{row.stage}</td>
                 <td className="px-4 py-3 font-mono text-xs text-fg-3">
