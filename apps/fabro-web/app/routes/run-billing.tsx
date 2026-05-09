@@ -121,13 +121,18 @@ export default function RunBilling({ params }: { params: { id: string } }) {
     : null;
   const totalUsdMicros = billing?.totals.total_usd_micros;
   const modelStageCount = modelBreakdown.reduce((sum, row) => sum + row.stages, 0);
+  const visibleRows = rows.filter(isVisibleRow);
 
-  if (!rows.length) {
+  if (!visibleRows.length) {
     return (
       <div className="py-12">
         <EmptyState
-          title="No stages yet"
-          description="Stages will appear as soon as the run starts executing."
+          title={rows.length ? "No model usage" : "No stages yet"}
+          description={
+            rows.length
+              ? "This run didn't call any AI models."
+              : "Stages will appear as soon as the run starts executing."
+          }
         />
       </div>
     );
@@ -147,7 +152,7 @@ export default function RunBilling({ params }: { params: { id: string } }) {
             </tr>
           </thead>
           <tbody>
-            {rows.filter(isVisibleRow).map((row) => (
+            {visibleRows.map((row) => (
               <tr key={row.stage} className="border-b border-line last:border-b-0">
                 <td className="px-4 py-3 text-fg-2">{row.stage}</td>
                 <td className="px-4 py-3 font-mono text-xs text-fg-3">

@@ -66,7 +66,7 @@ describe("RunBilling", () => {
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   });
 
-  test("hides completed non-billable stages but still renders the totals row", () => {
+  test("shows a no-model-usage empty state when every stage is non-billable", () => {
     const renderer = renderBilling(
       billing({
         stages: [
@@ -93,12 +93,12 @@ describe("RunBilling", () => {
     );
 
     const text = textFromNode(renderer.toJSON());
+    expect(text).toContain("No model usage");
+    expect(text).toContain("This run didn't call any AI models.");
+    expect(text).not.toContain("No stages yet");
+    expect(text).not.toContain("By model");
     expect(text).not.toContain("start");
     expect(text).not.toContain("command");
-    expect(text).toMatch(/—\s*\/\s*—/);
-    expect(text).toContain("1m 1s");
-    expect(text).not.toContain("By model");
-    expect(text).not.toContain("No stages yet");
   });
 
   test("renders mixed LLM and non-LLM rows while counting only LLM rows by model", () => {
