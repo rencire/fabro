@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildTerminalWebSocketUrl,
   parseTerminalServerMessage,
+  TERMINAL_DOCK_CLEARANCE_CLASS,
 } from "./run-terminal";
 
 function locationLike(url: string): Location {
@@ -30,5 +31,9 @@ describe("run terminal route helpers", () => {
     });
     expect(parseTerminalServerMessage('{"type":"unknown"}')).toBeNull();
     expect(parseTerminalServerMessage("{")).toBeNull();
+  });
+
+  test("reserves space above the run steering bar", () => {
+    expect(TERMINAL_DOCK_CLEARANCE_CLASS).toContain("--fabro-interview-dock-clearance");
   });
 });

@@ -18,6 +18,8 @@ import { apiData, humanInTheLoopApi } from "../lib/api-client";
 import { useRunState } from "../lib/queries";
 
 export const handle = { wide: true, fullHeight: true };
+export const TERMINAL_DOCK_CLEARANCE_CLASS =
+  "pb-[calc(1.5rem+var(--fabro-interview-dock-clearance,0px))]";
 
 type ConnectionStatus = "connecting" | "ready" | "closed" | "error";
 
@@ -249,7 +251,10 @@ export default function RunTerminal({ params }: { params: { id: string } }) {
   }, [connectionKey, params.id]);
 
   return (
-    <main className="flex h-full min-h-0 flex-col" aria-labelledby={terminalId}>
+    <main
+      className={`flex h-full min-h-0 flex-col ${TERMINAL_DOCK_CLEARANCE_CLASS}`}
+      aria-labelledby={terminalId}
+    >
       <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <h2 id={terminalId} className="text-sm font-semibold text-fg">
