@@ -146,7 +146,7 @@ export function ParallelChildren({
       : [];
 
   return (
-    <div className="space-y-6 pl-3 pr-4 pt-2 sm:pr-6 lg:pr-8">
+    <div className="space-y-6 pl-3 pr-4 sm:pr-6 lg:pr-8">
       <StageMetaBar
         stage={stage}
         trailing={

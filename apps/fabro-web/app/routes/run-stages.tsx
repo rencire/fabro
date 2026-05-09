@@ -1298,7 +1298,7 @@ export default function RunStages() {
             )}
           </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto pt-2 pb-[calc(1.5rem+var(--fabro-interview-dock-clearance,0px))]">
+        <div className="min-h-0 flex-1 overflow-y-auto pt-6 pb-[calc(1.5rem+var(--fabro-interview-dock-clearance,0px))]">
           {effectiveTab === "primary" ? (
             renderer === "agent" ? (
               turns.length > 0 && filteredTurns.length === 0 ? (

@@ -47,7 +47,7 @@ export function ConditionalDecision({
   }, [allStages, edge]);
 
   return (
-    <div className="space-y-6 pl-3 pr-4 pt-2 sm:pr-6 lg:pr-8">
+    <div className="space-y-6 pl-3 pr-4 sm:pr-6 lg:pr-8">
       <StageMetaBar stage={stage} />
 
       <section className="rounded-lg bg-panel p-6 outline-1 -outline-offset-1 outline-line">
