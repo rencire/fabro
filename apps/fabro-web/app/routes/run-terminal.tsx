@@ -363,7 +363,7 @@ export default function RunTerminal({ params }: { params: { id: string } }) {
         </p>
       ) : null}
       <div
-        className="min-h-0 flex-1 overflow-hidden rounded border border-line"
+        className="min-h-0 flex-1 overflow-hidden rounded border border-line pb-3"
         style={{ backgroundColor: TERMINAL_BACKGROUND }}
       >
         <div ref={terminalEl} className="h-full min-h-0 p-3" />
