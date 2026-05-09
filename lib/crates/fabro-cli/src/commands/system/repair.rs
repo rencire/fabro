@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use crate::args::{SystemRepairArgs, SystemRepairCommand, SystemRepairRunsArgs};
 use crate::command_context::CommandContext;
+use crate::server_client::Client;
 use crate::shared::print_json_pretty;
 
 pub(super) async fn repair_command(
@@ -66,7 +67,7 @@ fn repair_runs_from(
 
 async fn delete_repair_runs<'a>(
     response: &'a types::SystemRepairRunsResponse,
-    server: &crate::server_client::Client,
+    server: &Client,
     yes: bool,
 ) -> RepairRunsDeleteSummary<'a> {
     let mut summary = RepairRunsDeleteSummary {
