@@ -6,7 +6,7 @@ import {
   eventsToActivity,
   extractStageModel,
   groupConsecutiveTools,
-  stageRendererBucket,
+  selectStageRenderer,
 } from "./run-stages";
 
 function envelope(seq: number, partial: Partial<EventEnvelope>): EventEnvelope {
@@ -573,30 +573,51 @@ describe("groupConsecutiveTools", () => {
   });
 });
 
-describe("stageRendererBucket", () => {
-  test("maps agent and prompt handlers to the Thread renderer", () => {
-    expect(stageRendererBucket("agent")).toBe("agent");
-    expect(stageRendererBucket("prompt")).toBe("agent");
-    expect(eventsTabLabel("transcript", stageRendererBucket("agent"))).toBe("Thread");
+describe("selectStageRenderer", () => {
+  test("maps every handler to its renderer", () => {
+    expect(selectStageRenderer("agent")).toBe("agent");
+    expect(selectStageRenderer("prompt")).toBe("agent");
+    expect(selectStageRenderer("command")).toBe("command");
+    expect(selectStageRenderer("human")).toBe("human");
+    expect(selectStageRenderer("conditional")).toBe("conditional");
+    expect(selectStageRenderer("parallel")).toBe("parallel");
+    expect(selectStageRenderer("parallel.fan_in")).toBe("fan_in");
+    expect(selectStageRenderer("stack.manager_loop")).toBe("manager_loop");
+    expect(selectStageRenderer("wait")).toBe("wait");
   });
 
-  test("maps command handlers to the Logs renderer", () => {
-    expect(stageRendererBucket("command")).toBe("command");
-    expect(eventsTabLabel("transcript", stageRendererBucket("command"))).toBe("Logs");
+  test("falls back to the Summary renderer for start, exit, and unknown handlers", () => {
+    expect(selectStageRenderer("start")).toBe("summary");
+    expect(selectStageRenderer("exit")).toBe("summary");
   });
+});
 
-  test("maps non-transcript handlers to Debug", () => {
-    for (const handler of [
-      "start",
-      "exit",
+describe("eventsTabLabel", () => {
+  test("uses Debug for the debug tab regardless of renderer", () => {
+    for (const renderer of [
+      "agent",
+      "command",
       "human",
       "conditional",
       "parallel",
-      "parallel.fan_in",
-      "stack.manager_loop",
+      "fan_in",
+      "manager_loop",
       "wait",
+      "summary",
     ] as const) {
-      expect(stageRendererBucket(handler)).toBe("other");
+      expect(eventsTabLabel("debug", renderer)).toBe("Debug");
     }
+  });
+
+  test("primary tab labels reflect the renderer's primary view", () => {
+    expect(eventsTabLabel("primary", "agent")).toBe("Thread");
+    expect(eventsTabLabel("primary", "command")).toBe("Logs");
+    expect(eventsTabLabel("primary", "human")).toBe("Q&A");
+    expect(eventsTabLabel("primary", "conditional")).toBe("Decision");
+    expect(eventsTabLabel("primary", "parallel")).toBe("Children");
+    expect(eventsTabLabel("primary", "fan_in")).toBe("Results");
+    expect(eventsTabLabel("primary", "manager_loop")).toBe("Iterations");
+    expect(eventsTabLabel("primary", "wait")).toBe("Status");
+    expect(eventsTabLabel("primary", "summary")).toBe("Summary");
   });
 });

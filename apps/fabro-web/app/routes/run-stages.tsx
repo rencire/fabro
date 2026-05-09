@@ -6,7 +6,6 @@ import {
   CpuChipIcon,
 } from "@heroicons/react/16/solid";
 import { CircleStackIcon, ClockIcon } from "@heroicons/react/20/solid";
-import { Marked } from "marked";
 
 import {
   DebugEventDetailsPanel,
@@ -17,12 +16,25 @@ import {
   debugCategory,
   debugCategoryLabel,
   formatElapsed,
-  highlightJson,
 } from "../components/event-debug";
 import { StageSidebar } from "../components/stage-sidebar";
 import type { Stage } from "../components/stage-sidebar";
 import { EmptyState } from "../components/state";
 import { Tooltip } from "../components/ui";
+import { ConditionalDecision } from "../components/stage-renderers/conditional-decision";
+import { FanInResults } from "../components/stage-renderers/fan-in-results";
+import { extractStageNotes } from "../components/stage-renderers/helpers";
+import { HumanQA } from "../components/stage-renderers/human-qa";
+import { ManagerLoopSummary } from "../components/stage-renderers/manager-loop-summary";
+import { ParallelChildren } from "../components/stage-renderers/parallel-children";
+import {
+  CodeBlock,
+  DetailField,
+  JsonBlock,
+  Markdown,
+} from "../components/stage-renderers/primitives";
+import { StageSummary } from "../components/stage-renderers/stage-summary";
+import { WaitStatus } from "../components/stage-renderers/wait-status";
 import { formatAbsoluteTs, formatBytes } from "../lib/format";
 import {
   useRun,
@@ -54,7 +66,17 @@ type TurnType =
     };
 
 type CommandTurn = Extract<TurnType, { kind: "command" }>;
-type StageKind = "agent" | "command" | "other";
+
+export type StageRenderer =
+  | "agent"
+  | "command"
+  | "human"
+  | "conditional"
+  | "parallel"
+  | "fan_in"
+  | "manager_loop"
+  | "wait"
+  | "summary";
 
 type PanelSelection =
   | { kind: "single"; turnIndex: number }
@@ -74,31 +96,51 @@ const EVENT_KIND_LABEL: Record<EventKind, string> = {
   command: "Command",
 };
 
-const EVENTS_TABS = ["transcript", "debug"] as const;
+const EVENTS_TABS = ["primary", "debug"] as const;
 type EventsTab = (typeof EVENTS_TABS)[number];
 
-export function eventsTabLabel(tab: EventsTab, stageKind: StageKind): string {
-  if (tab === "debug") return "Debug";
-  return stageKind === "command" ? "Logs" : "Thread";
-}
+const PRIMARY_TAB_LABEL: Record<StageRenderer, string> = {
+  agent: "Thread",
+  command: "Logs",
+  human: "Q&A",
+  conditional: "Decision",
+  parallel: "Children",
+  fan_in: "Results",
+  manager_loop: "Iterations",
+  wait: "Status",
+  summary: "Summary",
+};
 
-function stageHasExplicitRenderer(stageKind: StageKind): stageKind is "agent" | "command" {
-  return stageKind !== "other";
+export function eventsTabLabel(tab: EventsTab, renderer: StageRenderer): string {
+  if (tab === "debug") return "Debug";
+  return PRIMARY_TAB_LABEL[renderer];
 }
 
 function assertNever(value: never): never {
   throw new Error(`Unhandled stage activity event type: ${value}`);
 }
 
-export function stageRendererBucket(handler: StageHandler): StageKind {
+export function selectStageRenderer(handler: StageHandler): StageRenderer {
   switch (handler) {
     case "agent":
     case "prompt":
       return "agent";
     case "command":
       return "command";
+    case "human":
+      return "human";
+    case "conditional":
+      return "conditional";
+    case "parallel":
+      return "parallel";
+    case "parallel.fan_in":
+      return "fan_in";
+    case "stack.manager_loop":
+      return "manager_loop";
+    case "wait":
+      return "wait";
     default:
-      return "other";
+      return "summary";
   }
 }
 
@@ -359,50 +401,6 @@ function oneLine(text: string): string {
   return `${collapsed.slice(0, SUMMARY_MAX_CHARS - 1)}…`;
 }
 
-const SAFE_HTTP_URL_RE = /^https?:\/\//i;
-const SAFE_MAILTO_URL_RE = /^mailto:/i;
-
-function isSafeMarkdownHref(href: string): boolean {
-  return (
-    SAFE_HTTP_URL_RE.test(href) ||
-    SAFE_MAILTO_URL_RE.test(href) ||
-    href.startsWith("#") ||
-    (href.startsWith("/") && !href.startsWith("//"))
-  );
-}
-
-const markedSafe = new Marked();
-markedSafe.use({
-  async: false,
-  walkTokens(token) {
-    if (
-      (token.type === "link" || token.type === "image") &&
-      typeof token.href === "string" &&
-      !isSafeMarkdownHref(token.href)
-    ) {
-      token.href = "";
-    }
-  },
-  renderer: {
-    html() {
-      return "";
-    },
-  },
-});
-
-function Markdown({ content }: { content: string }) {
-  const html = useMemo(
-    () => markedSafe.parse(content, { async: false }) as string,
-    [content],
-  );
-  return (
-    <div
-      className="prose prose-sm max-w-none text-fg-3 prose-headings:text-fg-2 prose-strong:text-fg-2 prose-code:rounded prose-code:bg-overlay-strong prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.8em] prose-code:font-mono prose-code:text-fg-3 prose-code:before:content-none prose-code:after:content-none prose-pre:bg-overlay-strong prose-pre:text-fg-3 prose-a:text-teal-500"
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
-  );
-}
-
 const TOOL_NAME_DISPLAY: Record<string, string> = {
   read_file: "Read",
   write_file: "Write",
@@ -607,61 +605,6 @@ function ToolGroupRow({
         </span>
       </Tooltip>
     </button>
-  );
-}
-
-function DetailField({
-  label,
-  children,
-  mono = false,
-}: {
-  label: string;
-  children: React.ReactNode;
-  mono?: boolean;
-}) {
-  return (
-    <div>
-      <div className="mb-1 text-xs font-medium uppercase tracking-wider text-fg-muted">
-        {label}
-      </div>
-      <div className={mono ? "font-mono text-sm text-fg-3" : "text-sm text-fg-3"}>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function CodeBlock({ children }: { children: string }) {
-  return (
-    <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-md bg-overlay-strong p-3 font-mono text-xs leading-relaxed text-fg-3">
-      {children || <span className="text-fg-muted">empty</span>}
-    </pre>
-  );
-}
-
-function prettyJson(raw: string): { text: string; isJson: boolean } {
-  if (!raw || !raw.trim()) return { text: "", isJson: false };
-  try {
-    return { text: JSON.stringify(JSON.parse(raw), null, 2), isJson: true };
-  } catch {
-    return { text: raw, isJson: false };
-  }
-}
-
-function JsonBlock({ value }: { value: string }) {
-  const pretty = useMemo(() => prettyJson(value), [value]);
-  const tokens = useMemo(
-    () => (pretty.isJson ? highlightJson(pretty.text) : null),
-    [pretty.isJson, pretty.text],
-  );
-  return (
-    <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-md bg-overlay-strong p-3 font-mono text-xs leading-relaxed text-fg-3">
-      {!pretty.text ? (
-        <span className="text-fg-muted">empty</span>
-      ) : (
-        tokens ?? pretty.text
-      )}
-    </pre>
   );
 }
 
@@ -1026,11 +969,11 @@ function ToolGroupDetailsPanel({
 
 function EventsTabToggle({
   tab,
-  stageKind,
+  renderer,
   onTabChange,
 }: {
   tab: EventsTab;
-  stageKind: StageKind;
+  renderer: StageRenderer;
   onTabChange: (tab: EventsTab) => void;
 }) {
   return (
@@ -1053,7 +996,7 @@ function EventsTabToggle({
                 : "text-fg-muted hover:text-fg-2"
             }`}
           >
-            {eventsTabLabel(value, stageKind)}
+            {eventsTabLabel(value, renderer)}
           </button>
         );
       })}
@@ -1063,7 +1006,7 @@ function EventsTabToggle({
 
 function EventsToolbar({
   tab,
-  stageKind,
+  renderer,
   commandTurn,
   onTabChange,
   selectedKinds,
@@ -1078,7 +1021,7 @@ function EventsToolbar({
   model,
 }: {
   tab: EventsTab;
-  stageKind: StageKind;
+  renderer: StageRenderer;
   commandTurn: CommandTurn | null;
   onTabChange: (tab: EventsTab) => void;
   selectedKinds: EventKind[];
@@ -1092,31 +1035,32 @@ function EventsToolbar({
   totalCount: number;
   model: string | null;
 }) {
-  const showFilters = !(tab === "transcript" && stageKind === "command");
+  // Filters apply to: the agent transcript (filter event kinds) and the Debug
+  // tab (filter event categories). Specialized renderers (human, parallel,
+  // wait, etc.) and the command logs view don't have a filterable list.
+  const showFilters = tab === "debug" || (tab === "primary" && renderer === "agent");
   const transcriptAllSelected = selectedKinds.length === EVENT_KINDS.length;
   const debugAllSelected =
     selectedDebugCategories.length === 0 ||
     selectedDebugCategories.length === availableDebugCategories.length;
   const isFiltering =
     showFilters &&
-    (tab === "transcript"
+    (tab === "primary"
       ? !transcriptAllSelected || search.length > 0
       : !debugAllSelected || search.length > 0);
 
   function clearFilters() {
-    if (tab === "transcript") onKindsChange([...EVENT_KINDS]);
+    if (tab === "primary") onKindsChange([...EVENT_KINDS]);
     else onDebugCategoriesChange([]);
     onSearchChange("");
   }
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pb-3">
-      {stageHasExplicitRenderer(stageKind) && (
-        <EventsTabToggle tab={tab} stageKind={stageKind} onTabChange={onTabChange} />
-      )}
+      <EventsTabToggle tab={tab} renderer={renderer} onTabChange={onTabChange} />
       {showFilters && (
         <div className="flex flex-1 flex-wrap items-center gap-2">
-          {tab === "transcript" ? (
+          {tab === "primary" ? (
             <MultiSelectFilter<EventKind>
               selected={selectedKinds}
               options={EVENT_KINDS}
@@ -1160,7 +1104,9 @@ function EventsToolbar({
           <span className="font-mono">{model}</span>
         </span>
       )}
-      {!showFilters && commandTurn && <CommandStatus turn={commandTurn} />}
+      {tab === "primary" && renderer === "command" && commandTurn && (
+        <CommandStatus turn={commandTurn} />
+      )}
     </div>
   );
 }
@@ -1184,9 +1130,9 @@ export default function RunStages() {
         : [],
     [stageEventsQuery.data, selectedStageId],
   );
-  const stageKind = selectedStage
-    ? stageRendererBucket(selectedStage.handler)
-    : "other";
+  const renderer: StageRenderer = selectedStage
+    ? selectStageRenderer(selectedStage.handler)
+    : "summary";
   const commandTurn = useMemo<CommandTurn | null>(() => {
     for (let i = turns.length - 1; i >= 0; i -= 1) {
       const t = turns[i];
@@ -1202,8 +1148,8 @@ export default function RunStages() {
     setOpenDebugSeq(null);
   }, [selectedStageId]);
 
-  const [tab, setTab] = useState<EventsTab>("transcript");
-  const effectiveTab: EventsTab = stageKind === "other" ? "debug" : tab;
+  const [tab, setTab] = useState<EventsTab>("primary");
+  const effectiveTab: EventsTab = tab;
   const [selectedKinds, setSelectedKinds] = useState<EventKind[]>([
     ...EVENT_KINDS,
   ]);
@@ -1316,7 +1262,7 @@ export default function RunStages() {
           <div className="pl-3 pr-4 sm:pr-6 lg:pr-8">
             <EventsToolbar
               tab={effectiveTab}
-              stageKind={stageKind}
+              renderer={renderer}
               commandTurn={commandTurn}
               onTabChange={setTab}
               selectedKinds={selectedKinds}
@@ -1326,59 +1272,87 @@ export default function RunStages() {
               availableDebugCategories={availableDebugCategories}
               search={search}
               onSearchChange={setSearch}
-              filteredCount={effectiveTab === "transcript" ? filteredTurns.length : filteredDebugEvents.length}
-              totalCount={effectiveTab === "transcript" ? turns.length : debugEvents.length}
+              filteredCount={effectiveTab === "primary" ? filteredTurns.length : filteredDebugEvents.length}
+              totalCount={effectiveTab === "primary" ? turns.length : debugEvents.length}
               model={stageModel}
             />
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto pt-2 pb-[calc(1.5rem+var(--fabro-interview-dock-clearance,0px))]">
-          {effectiveTab === "transcript" ? (
-            stageKind === "command" ? (
-              <CommandLogs runId={id} stageId={selectedStage.id} turn={commandTurn} />
-            ) : turns.length > 0 && filteredTurns.length === 0 ? (
-              <div className="px-2 py-6 text-sm text-fg-muted">
-                No events match these filters.
-              </div>
-            ) : (
-              displayItems.map((item) => {
-                if (item.kind === "single") {
+          {effectiveTab === "primary" ? (
+            renderer === "agent" ? (
+              turns.length > 0 && filteredTurns.length === 0 ? (
+                <div className="px-2 py-6 text-sm text-fg-muted">
+                  No events match these filters.
+                </div>
+              ) : (
+                displayItems.map((item) => {
+                  if (item.kind === "single") {
+                    return (
+                      <EventRow
+                        key={`turn-${item.turnIndex}`}
+                        turn={item.turn}
+                        runStart={runStart}
+                        selected={
+                          panelSelection?.kind === "single" &&
+                          panelSelection.turnIndex === item.turnIndex
+                        }
+                        onSelect={() =>
+                          setPanelSelection({ kind: "single", turnIndex: item.turnIndex })
+                        }
+                      />
+                    );
+                  }
+                  const childIndices = item.children.map((c) => c.turnIndex);
+                  const groupKey = `group-${childIndices.join("-")}`;
+                  const isSelected =
+                    panelSelection?.kind === "group" &&
+                    panelSelection.childTurnIndices.length === childIndices.length &&
+                    panelSelection.childTurnIndices.every((v, i) => v === childIndices[i]);
                   return (
-                    <EventRow
-                      key={`turn-${item.turnIndex}`}
-                      turn={item.turn}
+                    <ToolGroupRow
+                      key={groupKey}
+                      group={item}
                       runStart={runStart}
-                      selected={
-                        panelSelection?.kind === "single" &&
-                        panelSelection.turnIndex === item.turnIndex
-                      }
+                      selected={isSelected}
                       onSelect={() =>
-                        setPanelSelection({ kind: "single", turnIndex: item.turnIndex })
+                        setPanelSelection({
+                          kind: "group",
+                          childTurnIndices: childIndices,
+                        })
                       }
                     />
                   );
-                }
-                const childIndices = item.children.map((c) => c.turnIndex);
-                const groupKey = `group-${childIndices.join("-")}`;
-                const isSelected =
-                  panelSelection?.kind === "group" &&
-                  panelSelection.childTurnIndices.length === childIndices.length &&
-                  panelSelection.childTurnIndices.every((v, i) => v === childIndices[i]);
-                return (
-                  <ToolGroupRow
-                    key={groupKey}
-                    group={item}
-                    runStart={runStart}
-                    selected={isSelected}
-                    onSelect={() =>
-                      setPanelSelection({
-                        kind: "group",
-                        childTurnIndices: childIndices,
-                      })
-                    }
-                  />
-                );
-              })
+                })
+              )
+            ) : renderer === "command" ? (
+              <CommandLogs runId={id} stageId={selectedStage.id} turn={commandTurn} />
+            ) : renderer === "human" ? (
+              <HumanQA stage={selectedStage} events={debugEvents} />
+            ) : renderer === "conditional" ? (
+              <ConditionalDecision stage={selectedStage} />
+            ) : renderer === "parallel" ? (
+              <ParallelChildren
+                stage={selectedStage}
+                events={debugEvents}
+                runId={id}
+                allStages={stages}
+              />
+            ) : renderer === "fan_in" ? (
+              <FanInResults
+                stage={selectedStage}
+                events={debugEvents}
+                notes={extractStageNotes(debugEvents)}
+              />
+            ) : renderer === "manager_loop" ? (
+              <ManagerLoopSummary
+                stage={selectedStage}
+                notes={extractStageNotes(debugEvents)}
+              />
+            ) : renderer === "wait" ? (
+              <WaitStatus stage={selectedStage} />
+            ) : (
+              <StageSummary stage={selectedStage} events={debugEvents} />
             )
           ) : debugEvents.length > 0 && filteredDebugEvents.length === 0 ? (
             <div className="px-2 py-6 text-sm text-fg-muted">
@@ -1398,8 +1372,8 @@ export default function RunStages() {
         </div>
       </div>
 
-      {effectiveTab === "transcript" ? (
-        stageKind === "command" ? null : panelSelection?.kind === "group" ? (
+      {effectiveTab === "primary" && renderer === "agent" ? (
+        panelSelection?.kind === "group" ? (
           <ToolGroupDetailsPanel
             group={openGroup}
             runStart={runStart}
@@ -1412,12 +1386,12 @@ export default function RunStages() {
             onClose={() => setPanelSelection(null)}
           />
         )
-      ) : (
+      ) : effectiveTab === "debug" ? (
         <DebugEventDetailsPanel
           event={openDebugEvent}
           onClose={() => setOpenDebugSeq(null)}
         />
-      )}
+      ) : null}
     </div>
   );
 }

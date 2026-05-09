@@ -19,6 +19,36 @@ export const SUCCEEDED_STAGE_STATES: ReadonlySet<StageState> = new Set([
   StageState.PARTIALLY_SUCCEEDED,
 ]);
 
+const STAGE_STATUS_TONE: Record<StageState, string> = {
+  pending: "bg-overlay-strong text-fg-muted",
+  running: "bg-teal-500/15 text-teal-500",
+  retrying: "bg-amber/15 text-amber",
+  succeeded: "bg-mint/15 text-mint",
+  partially_succeeded: "bg-amber/15 text-amber",
+  failed: "bg-coral/15 text-coral",
+  skipped: "bg-overlay-strong text-fg-muted",
+  cancelled: "bg-overlay-strong text-fg-muted",
+};
+
+const STAGE_STATUS_LABEL: Record<StageState, string> = {
+  pending: "Pending",
+  running: "Running",
+  retrying: "Retrying",
+  succeeded: "Succeeded",
+  partially_succeeded: "Partial",
+  failed: "Failed",
+  skipped: "Skipped",
+  cancelled: "Cancelled",
+};
+
+export function stageStatusTone(status: StageState): string {
+  return STAGE_STATUS_TONE[status];
+}
+
+export function stageStatusLabel(status: StageState): string {
+  return STAGE_STATUS_LABEL[status];
+}
+
 /**
  * Display label for a stage. Suffixes `(N)` for visits > 1 so a looped node
  * (e.g. `verify`) renders as `verify`, `verify (2)`, `verify (3)` in the
