@@ -28,6 +28,8 @@ import * as Insights from "./routes/insights";
 import * as InsightsEditor from "./routes/insights-editor";
 import * as InsightsNew from "./routes/insights-new";
 import * as Settings from "./routes/settings";
+import * as SettingsOverview from "./routes/settings-overview";
+import * as SettingsLiveEvents from "./routes/settings-live-events";
 import * as Profile from "./routes/profile";
 import AppShellModule from "./layouts/app-shell";
 
@@ -113,7 +115,12 @@ export const routes: RouteObject[] = [
               route("new", InsightsNew),
             ],
           }),
-          route("settings", Settings),
+          route("settings", Settings, {
+            children: [
+              indexRoute(SettingsOverview),
+              route("live-events", SettingsLiveEvents),
+            ],
+          }),
           route("profile", Profile),
         ],
       },
