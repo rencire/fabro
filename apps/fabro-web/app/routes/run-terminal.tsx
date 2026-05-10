@@ -196,7 +196,7 @@ export default function RunTerminal({ params }: { params: { id: string } }) {
   const accessCommandLabel = terminalAccessCommandLabel(provider);
   const [connectionKey, setConnectionKey] = useState(0);
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; recoverable: boolean } | null>(null);
   const terminalEl = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XtermTerminal | null>(null);
   const fitRef = useRef<XtermFitAddon | null>(null);
@@ -291,7 +291,10 @@ export default function RunTerminal({ params }: { params: { id: string } }) {
             return;
           }
           setStatus("error");
-          setError(message.message ?? "Terminal session failed.");
+          setError({
+            message: message.message ?? "Terminal session failed.",
+            recoverable: false,
+          });
           return;
         }
         const bytes = event.data instanceof ArrayBuffer
@@ -304,7 +307,10 @@ export default function RunTerminal({ params }: { params: { id: string } }) {
       });
       socket.addEventListener("error", () => {
         setStatus("error");
-        setError("Terminal WebSocket connection failed.");
+        setError({
+          message: "Terminal WebSocket connection failed.",
+          recoverable: true,
+        });
       });
 
       resizeObserver = new ResizeObserver(() => {
@@ -373,8 +379,8 @@ export default function RunTerminal({ params }: { params: { id: string } }) {
         <div className="flex min-h-0 flex-1 items-center justify-center" role="alert">
           <ErrorState
             title="Terminal unavailable"
-            description={error}
-            onRetry={reconnect}
+            description={error.message}
+            onRetry={error.recoverable ? reconnect : undefined}
           />
         </div>
       ) : (
