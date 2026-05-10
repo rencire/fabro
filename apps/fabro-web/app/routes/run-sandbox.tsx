@@ -109,12 +109,12 @@ function StatusStrip({ details }: { details: SandboxDetails }) {
       <span className="flex items-center gap-1.5">
         <span className={`size-2 rounded-full ${display.dot}`} />
         <span className={`font-medium ${display.text}`}>{display.label}</span>
+        {showNative && (
+          <span className="font-mono text-xs text-fg-muted">
+            ({details.native_state})
+          </span>
+        )}
       </span>
-      {showNative && (
-        <span className="font-mono text-xs text-fg-muted">
-          native: {details.native_state}
-        </span>
-      )}
     </div>
   );
 }
