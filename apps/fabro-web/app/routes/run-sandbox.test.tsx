@@ -16,6 +16,20 @@ mock.module("../lib/queries", () => ({
     isValidating: false,
     mutate:       mock(() => Promise.resolve(currentDetails)),
   }),
+  // FilesystemPanel imports these. They never run in this file's tests
+  // because mode=filesystem renders the panel without selecting a file, but
+  // the export shape needs to exist for the module evaluation to succeed.
+  useSandboxFiles: () => ({
+    data:         undefined,
+    error:        undefined,
+    isValidating: false,
+    mutate:       mock(() => Promise.resolve()),
+  }),
+  useSandboxFile: () => ({
+    data:   undefined,
+    error:  undefined,
+    mutate: mock(() => Promise.resolve()),
+  }),
 }));
 
 mock.module("../components/terminal-view", () => ({
@@ -23,16 +37,31 @@ mock.module("../components/terminal-view", () => ({
   TERMINAL_DOCK_CLEARANCE_CLASS: "",
 }));
 
-const { default: RunSandbox, formatBytesAsMemory } = await import("./run-sandbox");
+// Stub @pierre/trees and @pierre/diffs runtime so the filesystem panel can
+// render in this test without pulling in shiki/highlighter modules. The
+// filesystem panel's own behavior is exercised in filesystem-panel.test.tsx.
+mock.module("@pierre/trees/react", () => ({
+  FileTree:             () => <div data-test-id="file-tree-stub" />,
+  useFileTree:          () => ({ model: { resetPaths: () => {} } }),
+  useFileTreeSelection: () => [],
+}));
+mock.module("@pierre/trees", () => ({ themeToTreeStyles: () => ({}) }));
+mock.module("@pierre/theme/pierre-dark", () => ({ default: {} }));
+mock.module("@pierre/diffs/react", () => ({
+  File: () => <div data-test-id="pierre-file-stub" />,
+}));
+
+const { default: RunSandbox, formatBytesAsMemory, normalizeSandboxMode } =
+  await import("./run-sandbox");
 mock.restore();
 
 const mountedRenderers: TestRenderer.ReactTestRenderer[] = [];
 
-function renderRoute() {
+function renderRoute(initialPath: string = "/runs/run_1/sandbox") {
   let renderer!: TestRenderer.ReactTestRenderer;
   act(() => {
     renderer = TestRenderer.create(
-      <MemoryRouter initialEntries={["/runs/run_1/sandbox"]}>
+      <MemoryRouter initialEntries={[initialPath]}>
         <Routes>
           <Route path="/runs/:id/sandbox" element={<RunSandbox params={{ id: "run_1" }} />} />
         </Routes>
@@ -145,5 +174,71 @@ describe("RunSandbox route", () => {
         node.children.includes("No sandbox"),
     );
     expect(titles).toHaveLength(1);
+  });
+
+  test("Terminal is the default right-column mode", () => {
+    currentDetails = {
+      provider:     "docker",
+      name:         "fabro-run-abc",
+      id:           null,
+      state:        "running",
+      native_state: null,
+      region:       null,
+      image:        null,
+      resources:    { cpu_cores: null, memory_bytes: null, disk_bytes: null },
+      labels:       {},
+      timestamps:   { created_at: null, last_activity_at: null },
+    };
+    const renderer = renderRoute();
+
+    const tabs = renderer.root.findAll(
+      (node) =>
+        node.type === "button" && node.props.role === "tab",
+    );
+    expect(tabs).toHaveLength(2);
+    const labels = tabs.map((tab) => tab.children.find((c) => typeof c === "string"));
+    expect(labels).toEqual(["Terminal", "Filesystem"]);
+    const selected = tabs.find((tab) => tab.props["aria-selected"] === true);
+    expect(selected?.children.find((c) => typeof c === "string")).toBe("Terminal");
+  });
+
+  test("Filesystem mode keeps sandbox details visible in the left column", () => {
+    currentDetails = {
+      provider:     "docker",
+      name:         "fabro-run-abc",
+      id:           null,
+      state:        "running",
+      native_state: null,
+      region:       null,
+      image:        null,
+      resources:    { cpu_cores: null, memory_bytes: null, disk_bytes: null },
+      labels:       {},
+      timestamps:   { created_at: null, last_activity_at: null },
+    };
+    const renderer = renderRoute("/runs/run_1/sandbox?mode=filesystem");
+
+    const panelHeadings = renderer.root
+      .findAll((node) => node.type === "h3")
+      .map((node) => node.children.find((child) => typeof child === "string"))
+      .filter((text): text is string => typeof text === "string");
+    expect(panelHeadings).toEqual(["Overview", "Resources", "Labels", "Timestamps"]);
+
+    const tabs = renderer.root.findAll(
+      (node) => node.type === "button" && node.props.role === "tab",
+    );
+    const selected = tabs.find((tab) => tab.props["aria-selected"] === true);
+    expect(selected?.children.find((c) => typeof c === "string")).toBe("Filesystem");
+  });
+});
+
+describe("normalizeSandboxMode", () => {
+  test("defaults to terminal", () => {
+    expect(normalizeSandboxMode(null)).toBe("terminal");
+    expect(normalizeSandboxMode("")).toBe("terminal");
+    expect(normalizeSandboxMode("unknown")).toBe("terminal");
+  });
+
+  test("accepts filesystem", () => {
+    expect(normalizeSandboxMode("filesystem")).toBe("filesystem");
   });
 });

@@ -1,10 +1,21 @@
+import { useMemo } from "react";
+import { useSearchParams } from "react-router";
+
 import TerminalView, { TERMINAL_DOCK_CLEARANCE_CLASS } from "../components/terminal-view";
 import { EmptyState, ErrorState } from "../components/state";
 import { formatAbsoluteTs } from "../lib/format";
 import { useRunSandboxDetails } from "../lib/queries";
 import type { SandboxDetails, SandboxResources, SandboxState } from "@qltysh/fabro-api-client";
+import FilesystemPanel from "./run-sandbox/filesystem-panel";
 
 export const handle = { wide: true, fullHeight: true };
+
+export type SandboxMode = "terminal" | "filesystem";
+
+export function normalizeSandboxMode(value: string | null): SandboxMode {
+  if (value === "filesystem") return "filesystem";
+  return "terminal";
+}
 
 const EMPTY_VALUE = "—";
 
@@ -192,6 +203,26 @@ function DetailsColumn({ details }: { details: SandboxDetails | null }) {
 
 export default function RunSandbox({ params }: { params: { id: string } }) {
   const sandboxQuery = useRunSandboxDetails(params.id);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const mode = useMemo(
+    () => normalizeSandboxMode(searchParams.get("mode")),
+    [searchParams],
+  );
+
+  const setMode = (next: SandboxMode) => {
+    setSearchParams(
+      (current) => {
+        const params = new URLSearchParams(current);
+        if (next === "terminal") {
+          params.delete("mode");
+        } else {
+          params.set("mode", next);
+        }
+        return params;
+      },
+      { replace: true },
+    );
+  };
 
   // The outer flex spans from the tab bar's bottom border down to the
   // steer bar — `-mt-6` cancels the outlet wrapper's top gap, and we
@@ -220,9 +251,66 @@ export default function RunSandbox({ params }: { params: { id: string } }) {
         <div
           className={`flex min-h-0 flex-1 flex-col pt-6 pl-6 ${TERMINAL_DOCK_CLEARANCE_CLASS}`}
         >
-          <TerminalView runId={params.id} />
+          <ModeToggle mode={mode} onChange={setMode} />
+          {mode === "terminal" ? (
+            <TerminalView runId={params.id} />
+          ) : (
+            <FilesystemPanel runId={params.id} />
+          )}
         </div>
       </div>
     </div>
+  );
+}
+
+interface ModeToggleProps {
+  mode: SandboxMode;
+  onChange: (mode: SandboxMode) => void;
+}
+
+function ModeToggle({ mode, onChange }: ModeToggleProps) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Sandbox view"
+      className="mb-3 flex shrink-0 items-center gap-1 rounded-md border border-line bg-panel/60 p-1 self-start"
+    >
+      <ModeToggleButton
+        label="Terminal"
+        active={mode === "terminal"}
+        onClick={() => onChange("terminal")}
+      />
+      <ModeToggleButton
+        label="Filesystem"
+        active={mode === "filesystem"}
+        onClick={() => onChange("filesystem")}
+      />
+    </div>
+  );
+}
+
+function ModeToggleButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={`rounded px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-teal-500 ${
+        active
+          ? "bg-overlay text-fg"
+          : "text-fg-3 hover:bg-overlay/50 hover:text-fg-2"
+      }`}
+    >
+      {label}
+    </button>
   );
 }

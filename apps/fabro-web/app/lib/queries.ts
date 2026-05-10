@@ -16,6 +16,7 @@ import type {
   RunProjection,
   RunSummary,
   SandboxDetails,
+  SandboxFileListResponse,
   ServerSettings,
   SystemInfoResponse,
   WorkflowDetailResponse,
@@ -25,9 +26,11 @@ import type {
 import {
   apiData,
   apiNullableData,
+  apiResponse,
   authApi,
   fetchAllPages,
   fetchAllStageEvents,
+  generatedAxios,
   humanInTheLoopApi,
   insightsApi,
   runInternalsApi,
@@ -193,6 +196,38 @@ export function useRunSandboxDetails(id: string | undefined) {
   return useSWR<SandboxDetails | null>(
     id ? queryKeys.runs.sandbox(id) : null,
     () => apiNullableData(() => humanInTheLoopApi.retrieveRunSandbox(id!)),
+  );
+}
+
+export function useSandboxFiles(
+  id: string | undefined,
+  path: string | undefined,
+  depth?: number,
+) {
+  return useSWR<SandboxFileListResponse>(
+    id && path ? queryKeys.runs.sandboxFiles(id, path, depth) : null,
+    () => apiData(() => humanInTheLoopApi.listSandboxFiles(id!, path!, depth)),
+    { keepPreviousData: true },
+  );
+}
+
+export function useSandboxFile(
+  id: string | undefined,
+  path: string | null | undefined,
+) {
+  return useSWR<ArrayBuffer>(
+    id && path ? queryKeys.runs.sandboxFile(id, path) : null,
+    async () => {
+      const url = `/api/v1/runs/${encodeURIComponent(id!)}/sandbox/file`;
+      const response = await apiResponse(() =>
+        generatedAxios.get<ArrayBuffer>(url, {
+          params:       { path: path! },
+          responseType: "arraybuffer",
+        }),
+      );
+      return response.data;
+    },
+    { revalidateOnFocus: false, revalidateOnReconnect: false },
   );
 }
 

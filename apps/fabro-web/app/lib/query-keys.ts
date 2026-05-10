@@ -65,6 +65,10 @@ export const queryKeys = {
     stageLog: (id: string, stageId: string, offset = 0, limit = 65_536) =>
       ["runs", "stage-log", id, stageId, offset, limit] as const,
     sandbox: (id: string) => ["runs", "sandbox", id] as const,
+    sandboxFiles: (id: string, path: string, depth?: number) =>
+      ["runs", "sandbox-files", id, path, depth ?? null] as const,
+    sandboxFile: (id: string, path: string) =>
+      ["runs", "sandbox-file", id, path] as const,
     preview: (id: string) => ["runs", "preview", id] as const,
     cancel: (id: string) => ["runs", "cancel", id] as const,
     archive: (id: string) => ["runs", "archive", id] as const,
