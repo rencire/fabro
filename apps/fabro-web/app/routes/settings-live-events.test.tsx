@@ -72,10 +72,16 @@ describe("appendLiveEvent", () => {
     expect(result).toHaveLength(1);
   });
 
-  test("dedupes by run_id:seq when id is missing", () => {
+  test("dedupes by run_id:seq:event when id is missing", () => {
     const a: LiveEventPayload = { run_id: "run-1", seq: 7, event: "x" };
     const result = appendLiveEvent([a], { run_id: "run-1", seq: 7, event: "x" });
     expect(result).toHaveLength(1);
+  });
+
+  test("keeps different event names with the same run_id and seq", () => {
+    const a: LiveEventPayload = { run_id: "run-1", seq: 7, event: "x" };
+    const result = appendLiveEvent([a], { run_id: "run-1", seq: 7, event: "y" });
+    expect(result).toHaveLength(2);
   });
 
   test("treats events with neither id nor seq as distinct", () => {

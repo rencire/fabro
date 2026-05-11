@@ -1036,33 +1036,33 @@ mod runs {
     ) -> RunSummary {
         let created_at = ts(created_at);
         let run_id = RunId::with_timestamp(created_at, sequence);
-        RunSummary::new(
+        RunSummary::from_parts(RunParts {
             run_id,
-            Some(workflow_name.into()),
-            Some(workflow_slug.into()),
-            goal.into(),
-            fabro_types::infer_run_title(goal),
-            labels(entries),
-            Some(format!("/demo/{repo_name}")),
-            Some(format!("https://github.com/demo/{repo_name}.git")),
-            None,
-            Some(created_at),
-            Some(created_at),
-            Some(created_at),
-            parse_run_status(status, status_reason)
+            workflow_name: Some(workflow_name.into()),
+            workflow_slug: Some(workflow_slug.into()),
+            goal: goal.into(),
+            title: fabro_types::infer_run_title(goal),
+            labels: labels(entries),
+            source_directory: Some(format!("/demo/{repo_name}")),
+            repo_origin_url: Some(format!("https://github.com/demo/{repo_name}.git")),
+            created_by: None,
+            start_time: Some(created_at),
+            last_event_at: Some(created_at),
+            completed_at: Some(created_at),
+            status: parse_run_status(status, status_reason)
                 .unwrap_or_else(|| panic!("invalid demo run status: {status}")),
             pending_control,
-            elapsed_secs.and_then(duration_ms_from_secs),
+            duration_ms: elapsed_secs.and_then(duration_ms_from_secs),
             total_usd_micros,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Vec::new(),
-            None,
-            None,
-        )
+            superseded_by: None,
+            diff_summary: None,
+            pull_request: None,
+            archived_at: None,
+            sandbox: None,
+            models: Vec::new(),
+            current_question: None,
+            web_url: None,
+        })
     }
 
     fn parse_run_status(status: &str, status_reason: Option<&str>) -> Option<RunStatus> {

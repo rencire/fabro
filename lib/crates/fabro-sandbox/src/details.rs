@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use fabro_types::{
     RunId, RunSandbox, SandboxDetails, SandboxProvider, SandboxResources, SandboxState,
     SandboxTimestamps,
@@ -54,6 +55,12 @@ fn local_details(record: &RunSandbox) -> SandboxDetails {
     }
 }
 
+fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
 #[cfg(feature = "docker")]
 mod docker {
     use std::collections::BTreeMap;
@@ -62,10 +69,11 @@ mod docker {
     use bollard::Docker;
     use bollard::container::InspectContainerOptions;
     use bollard::models::{ContainerInspectResponse, ContainerStateStatusEnum, HostConfig};
-    use chrono::{DateTime, Utc};
     use fabro_types::{
         RunId, RunSandbox, SandboxDetails, SandboxResources, SandboxState, SandboxTimestamps,
     };
+
+    use super::parse_rfc3339_utc;
 
     pub(super) async fn docker_details(
         record: &RunSandbox,
@@ -116,7 +124,7 @@ mod docker {
 
         let image = inspect.image;
 
-        let created_at = inspect.created.as_deref().and_then(parse_docker_timestamp);
+        let created_at = inspect.created.as_deref().and_then(parse_rfc3339_utc);
 
         SandboxDetails {
             sandbox: RunSandbox {
@@ -133,12 +141,6 @@ mod docker {
                 last_activity_at: None,
             },
         }
-    }
-
-    fn parse_docker_timestamp(value: &str) -> Option<DateTime<Utc>> {
-        DateTime::parse_from_rfc3339(value)
-            .ok()
-            .map(|dt| dt.with_timezone(&Utc))
     }
 
     pub(super) fn docker_cpu_cores(host_config: &HostConfig) -> Option<f64> {
@@ -324,13 +326,13 @@ mod docker {
 
         #[test]
         fn parse_timestamp_accepts_rfc3339() {
-            let parsed = parse_docker_timestamp("2026-05-09T12:00:00Z");
+            let parsed = parse_rfc3339_utc("2026-05-09T12:00:00Z");
             assert!(parsed.is_some());
         }
 
         #[test]
         fn parse_timestamp_rejects_garbage() {
-            assert!(parse_docker_timestamp("not a date").is_none());
+            assert!(parse_rfc3339_utc("not a date").is_none());
         }
     }
 }
@@ -340,12 +342,12 @@ mod daytona {
     use std::collections::BTreeMap;
 
     use anyhow::{Context, Result, anyhow};
-    use chrono::{DateTime, Utc};
     use daytona_api_client::models::SandboxState as DaytonaState;
     use fabro_types::{
         RunSandbox, SandboxDetails, SandboxResources, SandboxState, SandboxTimestamps,
     };
 
+    use super::parse_rfc3339_utc;
     use crate::daytona::DaytonaSandbox;
 
     pub(super) async fn daytona_details(
@@ -412,16 +414,10 @@ mod daytona {
             resources,
             labels,
             timestamps: SandboxTimestamps {
-                created_at:       sandbox.created_at.as_deref().and_then(parse_iso8601),
-                last_activity_at: sandbox.updated_at.as_deref().and_then(parse_iso8601),
+                created_at:       sandbox.created_at.as_deref().and_then(parse_rfc3339_utc),
+                last_activity_at: sandbox.updated_at.as_deref().and_then(parse_rfc3339_utc),
             },
         }
-    }
-
-    fn parse_iso8601(value: &str) -> Option<DateTime<Utc>> {
-        DateTime::parse_from_rfc3339(value)
-            .ok()
-            .map(|dt| dt.with_timezone(&Utc))
     }
 
     /// The Daytona SDK reports CPU/memory/disk as floats in their respective

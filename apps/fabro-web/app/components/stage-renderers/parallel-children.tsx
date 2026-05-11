@@ -5,6 +5,7 @@ import type { EventEnvelope } from "@qltysh/fabro-api-client";
 
 import type { Stage } from "../stage-sidebar";
 import { CopyButton } from "../ui";
+import { formatDurationMs } from "../../lib/format";
 import { StageMetaBar } from "./meta-bar";
 import { parseParallelOverview, type ParallelBranchResult } from "./helpers";
 
@@ -49,14 +50,6 @@ function StatItem({
       <span className={`font-mono text-xl tabular-nums ${toneClass}`}>{value}</span>
     </div>
   );
-}
-
-function formatMs(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  const mins = Math.floor(ms / 60_000);
-  const secs = Math.round((ms % 60_000) / 1000);
-  return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
 }
 
 function ChildRow({
@@ -172,7 +165,7 @@ export function ParallelChildren({
         />
         <StatItem
           label="Duration"
-          value={overview.durationMs != null ? formatMs(overview.durationMs) : overview.isComplete ? "—" : "running"}
+          value={overview.durationMs != null ? formatDurationMs(overview.durationMs) : overview.isComplete ? "—" : "running"}
         />
       </section>
 

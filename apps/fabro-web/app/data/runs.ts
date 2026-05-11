@@ -4,28 +4,7 @@ import {
   type BoardColumn as ApiBoardColumn,
   type Run,
   type RunStatus as ApiRunStatus,
-  type SandboxResources,
 } from "@qltysh/fabro-api-client";
-
-const BYTES_PER_GIB = 1024 * 1024 * 1024;
-
-function formatBoardResources(resources: SandboxResources | null | undefined): string | undefined {
-  if (!resources) {
-    return undefined;
-  }
-  const parts: string[] = [];
-  if (resources.cpu_cores != null) {
-    parts.push(`${formatCpuCores(resources.cpu_cores)} CPU`);
-  }
-  if (resources.memory_bytes != null) {
-    parts.push(`${Math.round(resources.memory_bytes / BYTES_PER_GIB)} GB`);
-  }
-  return parts.length > 0 ? parts.join(" / ") : undefined;
-}
-
-function formatCpuCores(cores: number): string {
-  return Number.isInteger(cores) ? cores.toString() : cores.toFixed(1);
-}
 
 export type CiStatus = "passing" | "failing" | "pending";
 

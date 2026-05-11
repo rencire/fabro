@@ -141,6 +141,42 @@ impl RefreshTokenStore {
         self.repo.gc(|token| token.chain_id == chain_id).await
     }
 
+    pub async fn delete_active_chain_for_identity(
+        &self,
+        identity: &IdpIdentity,
+        chain_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<u64> {
+        let mut token_hashes = Vec::new();
+        let mut has_active_token = false;
+        let mut tokens = self.repo.scan_stream();
+
+        while let Some(result) = tokens.next().await {
+            let (_, token) = result?;
+            if token.identity != *identity || token.chain_id != chain_id {
+                continue;
+            }
+            if !token.used && token.expires_at > now {
+                has_active_token = true;
+            }
+            token_hashes.push(token.token_hash);
+        }
+
+        if !has_active_token {
+            return Ok(0);
+        }
+
+        let deleted = u64::try_from(token_hashes.len()).unwrap_or(u64::MAX);
+        transaction(&self.db, |tx| {
+            for token_hash in &token_hashes {
+                tx.delete::<RefreshToken>(token_hash)?;
+            }
+            Ok(())
+        })
+        .await?;
+        Ok(deleted)
+    }
+
     pub async fn gc_expired(&self, cutoff: DateTime<Utc>) -> Result<u64> {
         self.repo.gc(|token| token.expires_at <= cutoff).await
     }
@@ -362,6 +398,85 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_active_chain_for_identity_requires_active_owned_token() {
+        let store = store().await;
+        let identity = fabro_types::IdpIdentity::new("https://github.com", "12345").unwrap();
+        let chain_id = Uuid::new_v4();
+        let other_chain_id = Uuid::new_v4();
+        let active = refresh_token([1_u8; 32], chain_id, false);
+        let used = refresh_token([2_u8; 32], chain_id, true);
+        let mut other_identity = refresh_token([3_u8; 32], chain_id, false);
+        other_identity.identity = alternate_identity();
+        let other_chain = refresh_token([4_u8; 32], other_chain_id, false);
+
+        for token in [
+            active.clone(),
+            used.clone(),
+            other_identity.clone(),
+            other_chain.clone(),
+        ] {
+            store.insert_refresh_token(token).await.unwrap();
+        }
+
+        assert_eq!(
+            store
+                .delete_active_chain_for_identity(&identity, chain_id, chrono::Utc::now())
+                .await
+                .unwrap(),
+            2
+        );
+        assert!(
+            store
+                .find_refresh_token(&active.token_hash)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .find_refresh_token(&used.token_hash)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .find_refresh_token(&other_identity.token_hash)
+                .await
+                .unwrap(),
+            Some(other_identity)
+        );
+        assert_eq!(
+            store
+                .find_refresh_token(&other_chain.token_hash)
+                .await
+                .unwrap(),
+            Some(other_chain)
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_active_chain_for_identity_returns_zero_without_active_token() {
+        let store = store().await;
+        let identity = fabro_types::IdpIdentity::new("https://github.com", "12345").unwrap();
+        let chain_id = Uuid::new_v4();
+        let used = refresh_token([1_u8; 32], chain_id, true);
+        store.insert_refresh_token(used.clone()).await.unwrap();
+
+        assert_eq!(
+            store
+                .delete_active_chain_for_identity(&identity, chain_id, chrono::Utc::now())
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            store.find_refresh_token(&used.token_hash).await.unwrap(),
+            Some(used)
         );
     }
 

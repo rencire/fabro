@@ -583,7 +583,7 @@ describe("selectStageRenderer", () => {
     expect(selectStageRenderer("conditional")).toBe("conditional");
     expect(selectStageRenderer("parallel")).toBe("parallel");
     expect(selectStageRenderer("parallel.fan_in")).toBe("fan_in");
-    expect(selectStageRenderer("stack.manager_loop")).toBe("manager_loop");
+    expect(selectStageRenderer("stack.manager_loop")).toBe("summary");
     expect(selectStageRenderer("wait")).toBe("wait");
   });
 
@@ -602,7 +602,6 @@ describe("eventsTabLabel", () => {
       "conditional",
       "parallel",
       "fan_in",
-      "manager_loop",
       "wait",
       "summary",
     ] as const) {
@@ -617,7 +616,6 @@ describe("eventsTabLabel", () => {
     expect(eventsTabLabel("primary", "conditional")).toBe("Decision");
     expect(eventsTabLabel("primary", "parallel")).toBe("Children");
     expect(eventsTabLabel("primary", "fan_in")).toBe("Results");
-    expect(eventsTabLabel("primary", "manager_loop")).toBe("Iterations");
     expect(eventsTabLabel("primary", "wait")).toBe("Status");
     expect(eventsTabLabel("primary", "summary")).toBe("Summary");
   });

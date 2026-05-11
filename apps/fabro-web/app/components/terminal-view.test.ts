@@ -47,11 +47,38 @@ describe("terminal view helpers", () => {
   });
 
   test("uses sandbox id as terminal status detail", () => {
-    expect(sandboxStatusDetail({ provider: "docker", id: "container-abc123" }))
+    expect(sandboxStatusDetail({
+      provider: "docker",
+      image: null,
+      snapshot: null,
+      runtime: {
+        id: "container-abc123",
+        working_directory: "/workspace",
+        repo_cloned: null,
+        clone_origin_url: null,
+        clone_branch: null,
+      },
+    }))
       .toBe("container-abc123");
-    expect(sandboxStatusDetail({ provider: "daytona", id: "sandbox-name" }))
+    expect(sandboxStatusDetail({
+      provider: "daytona",
+      image: null,
+      snapshot: null,
+      runtime: {
+        id: "sandbox-name",
+        working_directory: "/workspace",
+        repo_cloned: null,
+        clone_origin_url: null,
+        clone_branch: null,
+      },
+    }))
       .toBe("sandbox-name");
-    expect(sandboxStatusDetail({ provider: "docker" })).toBe("docker");
+    expect(sandboxStatusDetail({
+      provider: "docker",
+      image: null,
+      snapshot: null,
+      runtime: null,
+    })).toBe("docker");
     expect(sandboxStatusDetail(null)).toBeNull();
   });
 });

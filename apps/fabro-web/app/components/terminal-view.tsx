@@ -12,6 +12,7 @@ import {
   ArrowTopRightOnSquareIcon,
   ClipboardDocumentIcon,
 } from "@heroicons/react/20/solid";
+import type { RunSandbox } from "@qltysh/fabro-api-client";
 
 import { SECONDARY_BUTTON_CLASS, Tooltip } from "./ui";
 import { ErrorState } from "./state";
@@ -108,20 +109,8 @@ function terminalAccessCommandErrorMessage(provider: string | null): string {
     : "Could not copy SSH command.";
 }
 
-function getObject(value: unknown, key: string): Record<string, unknown> | null {
-  if (!value || typeof value !== "object") return null;
-  const child = (value as Record<string, unknown>)[key];
-  return child && typeof child === "object" ? child as Record<string, unknown> : null;
-}
-
-function getString(value: Record<string, unknown> | null, key: string): string | null {
-  const child = value?.[key];
-  return typeof child === "string" ? child : null;
-}
-
-export function sandboxStatusDetail(sandbox: Record<string, unknown> | null): string | null {
-  return getString(sandbox, "id")
-    ?? getString(sandbox, "provider");
+export function sandboxStatusDetail(sandbox: RunSandbox | null | undefined): string | null {
+  return sandbox?.runtime?.id ?? sandbox?.provider ?? null;
 }
 
 function sendResize(socket: WebSocket | null, terminal: XtermTerminal | null) {
@@ -200,9 +189,8 @@ export default function TerminalView({
 }) {
   const { push } = useToast();
   const stateQuery = useRunState(runId);
-  const sandbox = getObject(getObject(stateQuery.data, "run"), "sandbox")
-    ?? getObject(stateQuery.data, "sandbox");
-  const provider = getString(sandbox, "provider");
+  const sandbox = stateQuery.data?.sandbox ?? null;
+  const provider = sandbox?.provider ?? null;
   const sandboxDetail = sandboxStatusDetail(sandbox);
   const accessCommandLabel = terminalAccessCommandLabel(provider);
   const [connectionKey, setConnectionKey] = useState(0);

@@ -11,7 +11,7 @@ import type { EventEnvelope } from "@qltysh/fabro-api-client";
 
 import type { Stage } from "../stage-sidebar";
 import { Tooltip } from "../ui";
-import { formatAbsoluteTs } from "../../lib/format";
+import { formatAbsoluteTs, formatDurationMs } from "../../lib/format";
 import { ACTIVE_STAGE_STATES } from "../../lib/stage-sidebar";
 import { Markdown } from "./primitives";
 import { StageMetaBar } from "./meta-bar";
@@ -21,14 +21,6 @@ import {
   type HumanResolution,
   type InterviewOption,
 } from "./helpers";
-
-function formatDurationMs(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  const mins = Math.floor(ms / 60_000);
-  const secs = Math.round((ms % 60_000) / 1000);
-  return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
-}
 
 function questionTypeLabel(type: string): string {
   switch (type) {

@@ -158,4 +158,3 @@ Provider behavior:
 - Docker disk size is nullable until there is a reliable configured/container-specific limit.
 - `native_state` is for display/debugging only; UI behavior keys off normalized `state`.
 - Lifecycle settings and actions are intentionally out of scope for this PR.
-

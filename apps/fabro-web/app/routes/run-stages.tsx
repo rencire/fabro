@@ -32,7 +32,6 @@ import { ConditionalDecision } from "../components/stage-renderers/conditional-d
 import { FanInResults } from "../components/stage-renderers/fan-in-results";
 import { extractStageNotes } from "../components/stage-renderers/helpers";
 import { HumanQA } from "../components/stage-renderers/human-qa";
-import { ManagerLoopSummary } from "../components/stage-renderers/manager-loop-summary";
 import { ParallelChildren } from "../components/stage-renderers/parallel-children";
 import {
   CodeBlock,
@@ -42,7 +41,12 @@ import {
 } from "../components/stage-renderers/primitives";
 import { StageSummary } from "../components/stage-renderers/stage-summary";
 import { WaitStatus } from "../components/stage-renderers/wait-status";
-import { formatAbsoluteTs, formatBytes } from "../lib/format";
+import {
+  formatAbsoluteTs,
+  formatBytes,
+  formatDurationMs,
+  formatTokenCount,
+} from "../lib/format";
 import {
   useRun,
   useRunEventsList,
@@ -82,7 +86,6 @@ export type StageRenderer =
   | "conditional"
   | "parallel"
   | "fan_in"
-  | "manager_loop"
   | "wait"
   | "summary";
 
@@ -112,7 +115,6 @@ const PRIMARY_TAB_LABEL: Record<StageRenderer, string> = {
   conditional: "Decision",
   parallel: "Children",
   fan_in: "Results",
-  manager_loop: "Iterations",
   wait: "Status",
   summary: "Summary",
 };
@@ -141,8 +143,6 @@ export function selectStageRenderer(handler: StageHandler): StageRenderer {
       return "parallel";
     case "parallel.fan_in":
       return "fan_in";
-    case "stack.manager_loop":
-      return "manager_loop";
     case "wait":
       return "wait";
     default:
@@ -593,17 +593,6 @@ function durationBetween(startTs: string | undefined, endTs: string): number {
   const endMs = Date.parse(endTs);
   if (Number.isNaN(startMs) || Number.isNaN(endMs)) return 0;
   return Math.max(0, endMs - startMs);
-}
-
-function formatDurationMs(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
-}
-
-function formatTokenCount(n: number): string {
-  if (n < 1000) return `${n}`;
-  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
-  return `${Math.round(n / 1_000_000)}M`;
 }
 
 export function turnMetric(turn: TurnType): string | null {
@@ -1525,11 +1514,6 @@ export default function RunStages() {
               <FanInResults
                 stage={selectedStage}
                 events={debugEvents}
-                notes={extractStageNotes(debugEvents)}
-              />
-            ) : renderer === "manager_loop" ? (
-              <ManagerLoopSummary
-                stage={selectedStage}
                 notes={extractStageNotes(debugEvents)}
               />
             ) : renderer === "wait" ? (

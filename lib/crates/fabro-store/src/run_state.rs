@@ -10,7 +10,7 @@ use fabro_types::settings::run::RunSandboxSettings;
 use fabro_types::{
     BilledModelUsage, Checkpoint, CheckpointRecord, CommandTermination, Conclusion, EventBody,
     FailureSignature, InterviewQuestionRecord, Outcome, PendingInterviewRecord, PullRequestRecord,
-    RunControlAction, RunDiff, RunEvent, RunId, RunModel, RunProjection, RunSandbox,
+    RunControlAction, RunDiff, RunEvent, RunId, RunModel, RunParts, RunProjection, RunSandbox,
     RunSandboxRuntime, RunSpec, RunStatus, RunSummary, SandboxProvider, StageCompletion,
     StageHandler, StageId, StageOutcome, StageProjection, StageState, StartRecord, first_event_seq,
 };
@@ -600,42 +600,42 @@ pub(crate) fn build_summary(state: &RunProjection, run_id: &RunId) -> RunSummary
         .as_ref()
         .and_then(|provenance| provenance.subject.clone());
 
-    RunSummary::new(
-        *run_id,
+    RunSummary::from_parts(RunParts {
+        run_id: *run_id,
         workflow_name,
-        state.spec.workflow_slug.clone(),
+        workflow_slug: state.spec.workflow_slug.clone(),
         goal,
-        state.title().into_owned(),
-        state.spec.labels.clone(),
-        state.spec.source_directory.clone(),
-        state.spec.git.as_ref().map(|git| git.origin_url.clone()),
+        title: state.title().into_owned(),
+        labels: state.spec.labels.clone(),
+        source_directory: state.spec.source_directory.clone(),
+        repo_origin_url: state.spec.git.as_ref().map(|git| git.origin_url.clone()),
         created_by,
-        state.start.as_ref().map(|start| start.start_time),
-        Some(state.last_event_at),
-        state
+        start_time: state.start.as_ref().map(|start| start.start_time),
+        last_event_at: Some(state.last_event_at),
+        completed_at: state
             .conclusion
             .as_ref()
             .map(|conclusion| conclusion.timestamp),
-        state.status,
-        state.pending_control,
-        state
+        status: state.status,
+        pending_control: state.pending_control,
+        duration_ms: state
             .conclusion
             .as_ref()
             .map(|conclusion| conclusion.duration_ms),
-        state
+        total_usd_micros: state
             .conclusion
             .as_ref()
             .and_then(|conclusion| conclusion.billing.as_ref())
             .and_then(|billing| billing.total_usd_micros),
-        state.superseded_by,
+        superseded_by: state.superseded_by,
         diff_summary,
-        state.pull_request.clone(),
-        state.archived_at,
-        state.sandbox.clone(),
+        pull_request: state.pull_request.clone(),
+        archived_at: state.archived_at,
+        sandbox: state.sandbox.clone(),
         models,
         current_question,
-        state.web_url.clone(),
-    )
+        web_url: state.web_url.clone(),
+    })
 }
 
 fn run_models(state: &RunProjection) -> Vec<RunModel> {

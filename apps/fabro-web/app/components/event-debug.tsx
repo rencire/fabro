@@ -347,6 +347,27 @@ const BAR_NORMAL_HEIGHT = 22;
 const BAR_HOVER_HEIGHT = 26;
 const BAR_SELECTED_HEIGHT = 28;
 const BAR_WIDTH = 4;
+const STRIP_MAX_MARKERS = 600;
+
+function sampleStripItems<T>(
+  items: T[],
+  maxItems: number,
+  keep: (item: T) => boolean,
+): T[] {
+  if (items.length <= maxItems) return items;
+
+  const indices = new Set<number>();
+  for (let i = 0; i < items.length; i += 1) {
+    if (keep(items[i])) indices.add(i);
+  }
+  for (let i = 0; i < maxItems; i += 1) {
+    indices.add(Math.round((i * (items.length - 1)) / Math.max(1, maxItems - 1)));
+  }
+
+  return Array.from(indices)
+    .sort((a, b) => a - b)
+    .map((index) => items[index]);
+}
 
 function friendlyEventName(eventName: string): string {
   const parts = eventName.split(".");
@@ -369,6 +390,14 @@ export function DebugDnaStrip({
     seq: number;
     rect: DOMRect;
   } | null>(null);
+  const visibleEvents = useMemo(
+    () => sampleStripItems(events, STRIP_MAX_MARKERS, (event) => event.seq === selectedSeq),
+    [events, selectedSeq],
+  );
+  const visibleEventBySeq = useMemo(
+    () => new Map(visibleEvents.map((event) => [event.seq, event])),
+    [visibleEvents],
+  );
 
   const range = useMemo(() => {
     if (events.length === 0) return null;
@@ -400,7 +429,7 @@ export function DebugDnaStrip({
   }
 
   const hoveredEvent =
-    hover != null ? events.find((e) => e.seq === hover.seq) ?? null : null;
+    hover != null ? visibleEventBySeq.get(hover.seq) ?? null : null;
 
   return (
     <div
@@ -408,7 +437,7 @@ export function DebugDnaStrip({
       style={{ height: STRIP_HEIGHT }}
     >
       <div className="relative h-full">
-        {events.map((event) => {
+        {visibleEvents.map((event) => {
           const ms = Date.parse(event.ts);
           if (Number.isNaN(ms)) return null;
           const pct = ((ms - range.start) / range.duration) * 100;
@@ -575,6 +604,19 @@ export function ThreadDnaStrip({
   const [hover, setHover] = useState<{ key: string; rect: DOMRect } | null>(
     null,
   );
+  const visibleItems = useMemo(
+    () => sampleStripItems(items, STRIP_MAX_MARKERS, (item) =>
+      selectionsEqual(item.selection, selection)
+    ),
+    [items, selection],
+  );
+  const visibleItemByKey = useMemo(
+    () =>
+      new Map(
+        visibleItems.map((item) => [selectionKey(item.selection), item]),
+      ),
+    [visibleItems],
+  );
 
   const totalMs = useMemo(() => {
     let max = 0;
@@ -597,7 +639,7 @@ export function ThreadDnaStrip({
 
   const hoveredItem =
     hover != null
-      ? items.find((it) => selectionKey(it.selection) === hover.key) ?? null
+      ? visibleItemByKey.get(hover.key) ?? null
       : null;
 
   return (
@@ -606,7 +648,7 @@ export function ThreadDnaStrip({
       style={{ height: STRIP_HEIGHT }}
     >
       <div className="relative h-full">
-        {items.map((item) => {
+        {visibleItems.map((item) => {
           const key = selectionKey(item.selection);
           const isInstant = item.durationMs <= 0;
           const isSelected = selectionsEqual(item.selection, selection);

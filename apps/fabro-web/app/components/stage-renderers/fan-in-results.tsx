@@ -7,6 +7,7 @@ import {
 import type { EventEnvelope } from "@qltysh/fabro-api-client";
 
 import type { Stage } from "../stage-sidebar";
+import { formatTokenCount } from "../../lib/format";
 import { getString } from "../../lib/unknown";
 import { Markdown, prettyJson } from "./primitives";
 import { StageMetaBar } from "./meta-bar";
@@ -48,12 +49,6 @@ function extractReducerTurn(events: EventEnvelope[]): ReducerTurn | null {
   }
 
   return hasReducer ? { prompt, response, model, inputTokens, outputTokens } : null;
-}
-
-function formatTokens(n: number): string {
-  if (n < 1000) return `${n}`;
-  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
-  return `${Math.round(n / 1_000_000)}M`;
 }
 
 /**
@@ -178,7 +173,7 @@ export function FanInResults({
               </span>
               {(reducer.inputTokens > 0 || reducer.outputTokens > 0) && (
                 <span className="ml-auto font-mono normal-case tracking-normal text-fg-muted">
-                  {formatTokens(reducer.inputTokens)} / {formatTokens(reducer.outputTokens)} tokens
+                  {formatTokenCount(reducer.inputTokens)} / {formatTokenCount(reducer.outputTokens)} tokens
                 </span>
               )}
             </header>

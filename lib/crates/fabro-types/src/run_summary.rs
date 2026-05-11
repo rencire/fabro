@@ -69,6 +69,34 @@ pub struct Run {
     pub diff_summary:     Option<DiffSummary>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunParts {
+    pub run_id:           RunId,
+    pub workflow_name:    Option<String>,
+    pub workflow_slug:    Option<String>,
+    pub goal:             String,
+    pub title:            String,
+    pub labels:           HashMap<String, String>,
+    pub source_directory: Option<String>,
+    pub repo_origin_url:  Option<String>,
+    pub created_by:       Option<Principal>,
+    pub start_time:       Option<DateTime<Utc>>,
+    pub last_event_at:    Option<DateTime<Utc>>,
+    pub completed_at:     Option<DateTime<Utc>>,
+    pub status:           RunStatus,
+    pub pending_control:  Option<RunControlAction>,
+    pub duration_ms:      Option<u64>,
+    pub total_usd_micros: Option<i64>,
+    pub superseded_by:    Option<RunId>,
+    pub diff_summary:     Option<DiffSummary>,
+    pub pull_request:     Option<PullRequest>,
+    pub archived_at:      Option<DateTime<Utc>>,
+    pub sandbox:          Option<RunSandbox>,
+    pub models:           Vec<RunModel>,
+    pub current_question: Option<InterviewQuestionRecord>,
+    pub web_url:          Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct RunWire {
     #[serde(default)]
@@ -369,36 +397,33 @@ pub struct RunLinks {
 }
 
 impl Run {
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "Run is a public wire DTO; the constructor centralizes derived fields."
-    )]
-    pub fn new(
-        run_id: RunId,
-        workflow_name: Option<String>,
-        workflow_slug: Option<String>,
-        goal: String,
-        title: String,
-        labels: HashMap<String, String>,
-        source_directory: Option<String>,
-        repo_origin_url: Option<String>,
-        created_by: Option<Principal>,
-        start_time: Option<DateTime<Utc>>,
-        last_event_at: Option<DateTime<Utc>>,
-        completed_at: Option<DateTime<Utc>>,
-        status: RunStatus,
-        pending_control: Option<RunControlAction>,
-        duration_ms: Option<u64>,
-        total_usd_micros: Option<i64>,
-        superseded_by: Option<RunId>,
-        diff_summary: Option<DiffSummary>,
-        pull_request: Option<PullRequest>,
-        archived_at: Option<DateTime<Utc>>,
-        sandbox: Option<RunSandbox>,
-        models: Vec<RunModel>,
-        current_question: Option<InterviewQuestionRecord>,
-        web_url: Option<String>,
-    ) -> Self {
+    pub fn from_parts(parts: RunParts) -> Self {
+        let RunParts {
+            run_id,
+            workflow_name,
+            workflow_slug,
+            goal,
+            title,
+            labels,
+            source_directory,
+            repo_origin_url,
+            created_by,
+            start_time,
+            last_event_at,
+            completed_at,
+            status,
+            pending_control,
+            duration_ms,
+            total_usd_micros,
+            superseded_by,
+            diff_summary,
+            pull_request,
+            archived_at,
+            sandbox,
+            models,
+            current_question,
+            web_url,
+        } = parts;
         let created_at = run_id.created_at();
         let repository = Some(repository_ref(
             repo_origin_url.as_deref(),

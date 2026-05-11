@@ -1005,11 +1005,11 @@ async fn delete_auth_session(
             .into_response();
         }
     };
-    let active_sessions = match auth_tokens
-        .active_cli_sessions(&authenticated.principal.identity, Utc::now())
+    let deleted = match auth_tokens
+        .delete_active_chain_for_identity(&authenticated.principal.identity, chain_id, Utc::now())
         .await
     {
-        Ok(tokens) => tokens,
+        Ok(deleted) => deleted,
         Err(err) => {
             error!(error = %err, "Failed to scan refresh tokens while deleting auth session");
             return ApiError::new(
@@ -1019,21 +1019,8 @@ async fn delete_auth_session(
             .into_response();
         }
     };
-
-    if !active_sessions
-        .iter()
-        .any(|token| token.chain_id == chain_id)
-    {
+    if deleted == 0 {
         return ApiError::not_found("Auth session not found.").into_response();
-    }
-
-    if let Err(err) = auth_tokens.delete_chain(chain_id).await {
-        error!(error = %err, %chain_id, "Failed to delete refresh token chain");
-        return ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to revoke auth session.",
-        )
-        .into_response();
     }
 
     StatusCode::NO_CONTENT.into_response()

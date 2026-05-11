@@ -79,3 +79,17 @@ export function formatDurationSecs(secs: number): string {
   const remainMin = minutes % 60;
   return remainMin > 0 ? `${hours}h ${remainMin}m` : `${hours}h`;
 }
+
+export function formatDurationMs(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1000);
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
+export function formatTokenCount(value: number): string {
+  if (value < 1000) return `${value}`;
+  if (value < 1_000_000) return `${Math.round(value / 1000)}k`;
+  return `${Math.round(value / 1_000_000)}M`;
+}

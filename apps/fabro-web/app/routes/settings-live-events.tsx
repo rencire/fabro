@@ -13,6 +13,7 @@ import {
 } from "../components/event-debug";
 import { EmptyState } from "../components/state";
 import { Tooltip } from "../components/ui";
+import { eventDedupeKey } from "../lib/cross-tab-sse";
 import { formatAbsoluteTs } from "../lib/format";
 import {
   subscribeToLiveEvents,
@@ -27,20 +28,12 @@ export const handle = { wide: true, fullHeight: true };
 
 export const MAX_EVENTS = 1000;
 
-export function eventDedupeKey(payload: LiveEventPayload): string | null {
-  if (typeof payload.id === "string") return payload.id;
-  if (typeof payload.run_id === "string" && typeof payload.seq === "number") {
-    return `${payload.run_id}:${payload.seq}`;
-  }
-  return null;
-}
-
 export function appendLiveEvent(
   buffer: LiveEventPayload[],
   payload: LiveEventPayload,
 ): LiveEventPayload[] {
   const key = eventDedupeKey(payload);
-  if (key !== null && buffer.some((event) => eventDedupeKey(event) === key)) {
+  if (key != null && buffer.some((event) => eventDedupeKey(event) === key)) {
     return buffer;
   }
   const next = [payload, ...buffer];

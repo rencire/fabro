@@ -1162,7 +1162,7 @@ function candidateKey(candidate: CandidateMessage): string {
   return `${candidate.candidateGeneration}:${candidate.candidateId}`;
 }
 
-function eventDedupeKey(payload: EventPayload): string | undefined {
+export function eventDedupeKey(payload: EventPayload): string | undefined {
   if (typeof payload.id === "string" && payload.id.length > 0) {
     return payload.id;
   }
