@@ -11,7 +11,7 @@ use fabro_vault::{SecretType, Vault};
 use httpmock::MockServer;
 use serde_json::Value;
 
-use super::support::{output_stderr, wait_for_event_names};
+use super::support::{output_stderr, remote_run_summary_json, wait_for_event_names};
 use crate::support::{run_output_filters, run_projection_json, unique_run_id};
 
 fn run_status_response(run_id: &str, status: &str) -> serde_json::Value {
@@ -20,12 +20,14 @@ fn run_status_response(run_id: &str, status: &str) -> serde_json::Value {
         "queued" => serde_json::json!({ "kind": "queued" }),
         other => panic!("unsupported test status {other:?}"),
     };
-    serde_json::json!({
-        "id": run_id,
-        "status": status,
-        "title": "Test run",
-        "created_at": "2026-04-05T12:00:00Z"
-    })
+    remote_run_summary_json(
+        run_id,
+        "Test Workflow",
+        "test-workflow",
+        "Test run",
+        &status,
+        "2026-04-05T12:00:00Z",
+    )
 }
 
 fn remote_run_state_response(run_id: &str) -> serde_json::Value {

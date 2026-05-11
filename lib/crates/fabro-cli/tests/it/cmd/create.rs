@@ -3,7 +3,10 @@ use httpmock::MockServer;
 use insta::assert_snapshot;
 use serde_json::json;
 
-use super::support::{fixture, output_stdout, resolve_run, run_count_for_test_case, run_state};
+use super::support::{
+    fixture, output_stdout, remote_run_summary_json, resolve_run, run_count_for_test_case,
+    run_state,
+};
 use crate::support::unique_run_id;
 
 fn resolved_run(settings: &fabro_types::WorkflowSettings) -> fabro_types::settings::RunNamespace {
@@ -15,12 +18,14 @@ fn run_status_response(run_id: &str, status: &str) -> serde_json::Value {
         "submitted" => json!({ "kind": "submitted" }),
         other => panic!("unsupported test status {other:?}"),
     };
-    serde_json::json!({
-        "id": run_id,
-        "status": status,
-        "title": "Test run",
-        "created_at": "2026-04-05T12:00:00Z"
-    })
+    remote_run_summary_json(
+        run_id,
+        "Test Workflow",
+        "test-workflow",
+        "Test run",
+        &status,
+        "2026-04-05T12:00:00Z",
+    )
 }
 
 #[test]
