@@ -26,10 +26,10 @@
 //! Resolution against the static adapter registry happens in `fabro-model`
 //! when the resolved [`Catalog`](fabro_model::Catalog) is built.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use chrono::NaiveDate;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::maps::MergeMap;
 
@@ -53,24 +53,29 @@ pub struct LlmLayer {
 #[serde(deny_unknown_fields)]
 pub struct ProviderSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
+    pub display_name:  Option<String>,
     /// Adapter registry key (e.g. `"openai_compatible"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub adapter:      Option<String>,
+    pub adapter:       Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub base_url:     Option<String>,
+    pub base_url:      Option<String>,
     /// Ordered list of credential references — first successful wins. Each
     /// entry must be a typed `CredentialRef` (`credential:<id>` or
     /// `env:<NAME>`); literal secret strings fail deserialization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub credentials:  Option<Vec<CredentialRef>>,
+    pub credentials:   Option<Vec<CredentialRef>>,
+    /// Extra HTTP headers attached to every outgoing provider request after
+    /// credential resolution. Header values are typed so secret-bearing values
+    /// stay as references until a later resolution phase.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_headers: Option<HashMap<String, HeaderValueRef>>,
     /// Higher wins; missing → `0`; ties broken by canonical provider ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub priority:     Option<i32>,
+    pub priority:      Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enabled:      Option<bool>,
+    pub enabled:       Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub aliases:      Option<Vec<String>>,
+    pub aliases:       Option<Vec<String>>,
 }
 
 /// One entry in `[llm.models.<id>]`.
@@ -314,6 +319,143 @@ impl TryFrom<String> for CredentialRef {
     }
 }
 
+// ---------------------------------------------------------------------------
+// HeaderValueRef - typed extra header value
+// ---------------------------------------------------------------------------
+
+/// A typed provider extra-header value.
+///
+/// Literal values are intended for non-secret routing metadata. Secret-bearing
+/// values must use `env` or `credential` references so settings never need to
+/// carry raw API keys as successful values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeaderValueRef {
+    Literal(String),
+    Env(String),
+    Credential(String),
+}
+
+impl Serialize for HeaderValueRef {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+
+        let mut map = serializer.serialize_map(Some(1))?;
+        match self {
+            Self::Literal(value) => map.serialize_entry("literal", value)?,
+            Self::Env(value) => map.serialize_entry("env", value)?,
+            Self::Credential(value) => map.serialize_entry("credential", value)?,
+        }
+        map.end()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum HeaderValueRefInput {
+    Table(HeaderValueRefSerde),
+    BareString(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+struct HeaderValueRefSerde {
+    #[serde(default)]
+    literal:    Option<String>,
+    #[serde(default)]
+    env:        Option<String>,
+    #[serde(default)]
+    credential: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for HeaderValueRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::Error as _;
+
+        match HeaderValueRefInput::deserialize(deserializer)? {
+            HeaderValueRefInput::Table(value) => value.try_into().map_err(D::Error::custom),
+            HeaderValueRefInput::BareString(value) => {
+                drop(value);
+                Err(D::Error::custom(HeaderValueRefParseError::WrongFieldCount))
+            }
+        }
+    }
+}
+
+impl TryFrom<HeaderValueRefSerde> for HeaderValueRef {
+    type Error = HeaderValueRefParseError;
+
+    fn try_from(value: HeaderValueRefSerde) -> Result<Self, Self::Error> {
+        let populated = [
+            value.literal.as_ref(),
+            value.env.as_ref(),
+            value.credential.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .count();
+
+        if populated != 1 {
+            return Err(HeaderValueRefParseError::WrongFieldCount);
+        }
+
+        if let Some(value) = value.literal {
+            if value.is_empty() {
+                return Err(HeaderValueRefParseError::EmptyValue);
+            }
+            return Ok(Self::Literal(value));
+        }
+        if let Some(value) = value.env {
+            if value.is_empty() {
+                return Err(HeaderValueRefParseError::EmptyValue);
+            }
+            return Ok(Self::Env(value));
+        }
+        if let Some(value) = value.credential {
+            if value.is_empty() {
+                return Err(HeaderValueRefParseError::EmptyValue);
+            }
+            return Ok(Self::Credential(value));
+        }
+
+        unreachable!("populated field count was already checked");
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeaderValueRefParseError {
+    WrongFieldCount,
+    EmptyValue,
+}
+
+impl std::fmt::Display for HeaderValueRefParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WrongFieldCount => f.write_str(
+                "header value must be a table with exactly one of `literal`, `env`, or `credential`; bare strings are rejected",
+            ),
+            Self::EmptyValue => f.write_str("header value reference must not be empty"),
+        }
+    }
+}
+
+impl std::error::Error for HeaderValueRefParseError {}
+
+impl std::fmt::Display for HeaderValueRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Literal(_) => f.write_str("literal:<redacted>"),
+            Self::Env(name) => write!(f, "env:{name}"),
+            Self::Credential(id) => write!(f, "credential:{id}"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -406,6 +548,142 @@ mod tests {
         assert!(err.is_err(), "literal secret strings must fail to parse");
     }
 
+    // ---- HeaderValueRef --------------------------------------------------
+
+    #[test]
+    fn header_value_ref_parses_literal_form() {
+        let parsed: HeaderValueRef = toml::from_str(r#"value = { literal = "@bedrock-prod" }"#)
+            .map(|v: toml::Value| {
+                v.as_table()
+                    .unwrap()
+                    .get("value")
+                    .unwrap()
+                    .clone()
+                    .try_into()
+                    .unwrap()
+            })
+            .unwrap();
+
+        assert_eq!(parsed, HeaderValueRef::Literal("@bedrock-prod".to_string()));
+        assert_eq!(parsed.to_string(), "literal:<redacted>");
+    }
+
+    #[test]
+    fn header_value_ref_parses_env_form() {
+        let parsed: HeaderValueRef = toml::from_str(r#"value = { env = "PORTKEY_API_KEY" }"#)
+            .map(|v: toml::Value| {
+                v.as_table()
+                    .unwrap()
+                    .get("value")
+                    .unwrap()
+                    .clone()
+                    .try_into()
+                    .unwrap()
+            })
+            .unwrap();
+
+        assert_eq!(parsed, HeaderValueRef::Env("PORTKEY_API_KEY".to_string()));
+        assert_eq!(parsed.to_string(), "env:PORTKEY_API_KEY");
+    }
+
+    #[test]
+    fn header_value_ref_parses_credential_form() {
+        let parsed: HeaderValueRef = toml::from_str(r#"value = { credential = "portkey_config" }"#)
+            .map(|v: toml::Value| {
+                v.as_table()
+                    .unwrap()
+                    .get("value")
+                    .unwrap()
+                    .clone()
+                    .try_into()
+                    .unwrap()
+            })
+            .unwrap();
+
+        assert_eq!(
+            parsed,
+            HeaderValueRef::Credential("portkey_config".to_string())
+        );
+        assert_eq!(parsed.to_string(), "credential:portkey_config");
+    }
+
+    #[test]
+    fn header_value_ref_rejects_bare_string() {
+        #[derive(Debug, Deserialize)]
+        struct Wrap {
+            #[expect(
+                dead_code,
+                reason = "field exists only to drive the deserializer; we assert on the parse error"
+            )]
+            value: HeaderValueRef,
+        }
+
+        let err = toml::from_str::<Wrap>(r#"value = "sk-portkey-literal""#).unwrap_err();
+        let message = err.message();
+
+        assert!(message.contains("header value"));
+        assert!(
+            !message.contains("sk-portkey-literal"),
+            "deserializer message must not echo a possible literal secret",
+        );
+    }
+
+    #[test]
+    fn header_value_ref_rejects_ambiguous_table() {
+        #[derive(Debug, Deserialize)]
+        struct Wrap {
+            #[expect(
+                dead_code,
+                reason = "field exists only to drive the deserializer; we assert on the parse error"
+            )]
+            value: HeaderValueRef,
+        }
+
+        let err = toml::from_str::<Wrap>(
+            r#"value = { env = "PORTKEY_API_KEY", literal = "@bedrock-prod" }"#,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("exactly one"));
+    }
+
+    #[test]
+    fn header_value_ref_rejects_unknown_keys() {
+        #[derive(Deserialize)]
+        #[expect(
+            dead_code,
+            reason = "field exists only to drive the deserializer; we assert on the parse error"
+        )]
+        struct Wrap {
+            value: HeaderValueRef,
+        }
+
+        let err: Result<Wrap, _> = toml::from_str(r#"value = { secret = "PORTKEY_API_KEY" }"#);
+
+        assert!(err.is_err(), "unknown header value keys must fail");
+    }
+
+    #[test]
+    fn header_value_ref_rejects_empty_values() {
+        #[derive(Debug, Deserialize)]
+        struct Wrap {
+            #[expect(
+                dead_code,
+                reason = "field exists only to drive the deserializer; we assert on the parse error"
+            )]
+            value: HeaderValueRef,
+        }
+
+        for source in [
+            r#"value = { literal = "" }"#,
+            r#"value = { env = "" }"#,
+            r#"value = { credential = "" }"#,
+        ] {
+            let err = toml::from_str::<Wrap>(source).unwrap_err();
+            assert!(err.to_string().contains("must not be empty"));
+        }
+    }
+
     // ---- LlmLayer parsing -------------------------------------------------
 
     #[test]
@@ -432,6 +710,56 @@ aliases = ["moonshot"]
             CredentialRef::Credential("kimi".to_string()),
             CredentialRef::Env("KIMI_API_KEY".to_string()),
         ]);
+    }
+
+    #[test]
+    fn parses_provider_extra_headers() {
+        let toml = r#"
+[providers.portkey]
+display_name = "Portkey Bedrock"
+adapter = "anthropic"
+base_url = "https://api.portkey.ai/v1"
+
+[providers.portkey.extra_headers]
+x-portkey-api-key = { env = "PORTKEY_API_KEY" }
+x-portkey-provider = { literal = "@bedrock-prod" }
+x-portkey-config = { credential = "portkey_config" }
+"#;
+
+        let layer: LlmLayer = toml::from_str(toml).unwrap();
+        let portkey = layer.providers.get("portkey").unwrap();
+
+        assert!(portkey.credentials.is_none());
+        let headers = portkey.extra_headers.as_ref().unwrap();
+        assert_eq!(
+            headers.get("x-portkey-api-key"),
+            Some(&HeaderValueRef::Env("PORTKEY_API_KEY".to_string())),
+        );
+        assert_eq!(
+            headers.get("x-portkey-provider"),
+            Some(&HeaderValueRef::Literal("@bedrock-prod".to_string())),
+        );
+        assert_eq!(
+            headers.get("x-portkey-config"),
+            Some(&HeaderValueRef::Credential("portkey_config".to_string())),
+        );
+    }
+
+    #[test]
+    fn provider_extra_headers_reject_bare_string_values() {
+        let toml = r#"
+[providers.portkey.extra_headers]
+x-portkey-api-key = "sk-portkey-literal"
+"#;
+
+        let err = toml::from_str::<LlmLayer>(toml).unwrap_err();
+        let message = err.message();
+
+        assert!(message.contains("header value"));
+        assert!(
+            !message.contains("sk-portkey-literal"),
+            "deserializer message must not echo a possible literal secret",
+        );
     }
 
     #[test]
@@ -601,6 +929,78 @@ mystery = 1
         assert_eq!(merged.credentials.unwrap(), vec![CredentialRef::Env(
             "FOO".to_string()
         )]);
+    }
+
+    #[test]
+    fn provider_extra_headers_map_replaces_wholesale() {
+        let high = ProviderSettings {
+            extra_headers: Some(HashMap::from([(
+                "x-portkey-provider".to_string(),
+                HeaderValueRef::Literal("@bedrock-prod".to_string()),
+            )])),
+            ..ProviderSettings::default()
+        };
+        let low = ProviderSettings {
+            extra_headers: Some(HashMap::from([
+                (
+                    "x-portkey-api-key".to_string(),
+                    HeaderValueRef::Env("PORTKEY_API_KEY".to_string()),
+                ),
+                (
+                    "x-portkey-provider".to_string(),
+                    HeaderValueRef::Literal("@bedrock-default".to_string()),
+                ),
+            ])),
+            ..ProviderSettings::default()
+        };
+
+        let merged = high.combine(low);
+
+        let headers = merged.extra_headers.unwrap();
+        assert_eq!(headers.len(), 1);
+        assert_eq!(
+            headers.get("x-portkey-provider"),
+            Some(&HeaderValueRef::Literal("@bedrock-prod".to_string())),
+        );
+        assert!(!headers.contains_key("x-portkey-api-key"));
+    }
+
+    #[test]
+    fn provider_extra_headers_inherit_when_unset() {
+        let high = ProviderSettings::default();
+        let low = ProviderSettings {
+            extra_headers: Some(HashMap::from([(
+                "x-portkey-api-key".to_string(),
+                HeaderValueRef::Env("PORTKEY_API_KEY".to_string()),
+            )])),
+            ..ProviderSettings::default()
+        };
+
+        let merged = high.combine(low);
+
+        assert_eq!(
+            merged.extra_headers.unwrap().get("x-portkey-api-key"),
+            Some(&HeaderValueRef::Env("PORTKEY_API_KEY".to_string())),
+        );
+    }
+
+    #[test]
+    fn provider_extra_headers_empty_map_clears_lower_layer() {
+        let high = ProviderSettings {
+            extra_headers: Some(HashMap::new()),
+            ..ProviderSettings::default()
+        };
+        let low = ProviderSettings {
+            extra_headers: Some(HashMap::from([(
+                "x-portkey-api-key".to_string(),
+                HeaderValueRef::Env("PORTKEY_API_KEY".to_string()),
+            )])),
+            ..ProviderSettings::default()
+        };
+
+        let merged = high.combine(low);
+
+        assert!(merged.extra_headers.unwrap().is_empty());
     }
 
     #[test]
