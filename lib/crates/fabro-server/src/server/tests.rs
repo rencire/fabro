@@ -17,7 +17,7 @@ use fabro_interview::{
 };
 use fabro_llm::types::{Message as LlmMessage, Request as LlmRequest};
 use fabro_model::catalog::LlmCatalogSettings;
-use fabro_model::{ModelRef, Provider};
+use fabro_model::{Catalog, ModelRef, Provider, Speed};
 use fabro_types::settings::ServerAuthMethod;
 use fabro_types::{
     AttrValue, AuthMethod, CommandTermination, FailureCategory, FailureDetail, Graph,
@@ -91,6 +91,13 @@ fn test_app_with() -> Router {
 
 fn spa_fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa")
+}
+
+fn state_test_catalog() -> Arc<Catalog> {
+    Arc::new(
+        Catalog::from_builtin_with_overrides(&LlmCatalogSettings::default())
+            .expect("default catalog should build"),
+    )
 }
 
 fn test_app_with_scheduler(state: Arc<AppState>) -> Router {
@@ -1227,7 +1234,8 @@ impl CredentialSource for FailingCredentialSource {
 
 #[tokio::test]
 async fn resolve_llm_client_from_source_preserves_credential_source_chain() {
-    let Err(err) = resolve_llm_client_from_source(&FailingCredentialSource).await else {
+    let catalog = state_test_catalog();
+    let Err(err) = resolve_llm_client_from_source(&FailingCredentialSource, catalog).await else {
         panic!("expected credential resolution to fail");
     };
     let chain = err.chain().map(ToString::to_string).collect::<Vec<_>>();
@@ -1264,9 +1272,14 @@ async fn llm_source_configured_providers_reads_openai_codex_from_vault() {
         )
         .unwrap();
 
-    assert_eq!(state.llm_source.configured_providers().await, vec![
-        Provider::OpenAi.id()
-    ]);
+    let catalog = state.catalog();
+    assert_eq!(
+        state
+            .llm_source
+            .configured_providers_for_catalog(catalog.as_ref())
+            .await,
+        vec![Provider::OpenAi.id()]
+    );
 }
 
 #[tokio::test]
@@ -1681,6 +1694,44 @@ destination = "stdout"
 
 #[cfg(unix)]
 #[test]
+fn worker_command_sets_fabro_config_to_active_absolute_config_path() {
+    let storage_dir = tempfile::tempdir().unwrap();
+    let config_dir = tempfile::tempdir().unwrap();
+    let active_config_path = config_dir.path().join("settings.toml");
+    let state = worker_command_test_state_with_active_config_path(
+        storage_dir.path(),
+        &["dev-token"],
+        Some(TEST_DEV_TOKEN),
+        active_config_path.clone(),
+    );
+    let run_id = RunId::new();
+
+    let cmd = worker_command(
+        state.as_ref(),
+        run_id,
+        RunExecutionMode::Start,
+        storage_dir.path(),
+    )
+    .unwrap();
+
+    assert!(active_config_path.is_absolute());
+    assert_eq!(
+        command_env_value(&cmd, EnvVars::FABRO_CONFIG),
+        EnvOverride::Set(active_config_path.display().to_string())
+    );
+    let worker_args = cmd
+        .as_std()
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    assert!(
+        !worker_args.iter().any(|arg| arg == "--config"),
+        "__run-worker argument contract should not grow hidden config args: {worker_args:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn worker_command_env_log_destination_overrides_server_logging_config() {
     let storage_dir = tempfile::tempdir().unwrap();
     let state = worker_command_test_state_with_extra_config_and_env_lookup(
@@ -1768,6 +1819,7 @@ methods = ["dev-token"]
         server_secrets: ServerSecrets::load(server_env_path, HashMap::new()).unwrap(),
         env_lookup: default_env_lookup(),
         github_api_base_url: None,
+        active_config_path: tempfile::tempdir().unwrap().path().join("settings.toml"),
         http_client: Some(fabro_http::test_http_client().expect("test HTTP client should build")),
         shutdown: tokio_util::sync::CancellationToken::new(),
     }) else {
@@ -1811,6 +1863,43 @@ fn worker_command_test_state_with_extra_config_and_env_lookup(
     extra_server_secrets: &[(&str, &str)],
     env_lookup: impl Fn(&str) -> Option<String> + Send + Sync + 'static,
 ) -> Arc<AppState> {
+    worker_command_test_state_inner(
+        storage_dir,
+        methods,
+        dev_token,
+        extra_config,
+        extra_server_secrets,
+        env_lookup,
+        None,
+    )
+}
+
+fn worker_command_test_state_with_active_config_path(
+    storage_dir: &Path,
+    methods: &[&str],
+    dev_token: Option<&str>,
+    active_config_path: PathBuf,
+) -> Arc<AppState> {
+    worker_command_test_state_inner(
+        storage_dir,
+        methods,
+        dev_token,
+        "",
+        &[],
+        |_| None,
+        Some(active_config_path),
+    )
+}
+
+fn worker_command_test_state_inner(
+    storage_dir: &Path,
+    methods: &[&str],
+    dev_token: Option<&str>,
+    extra_config: &str,
+    extra_server_secrets: &[(&str, &str)],
+    env_lookup: impl Fn(&str) -> Option<String> + Send + Sync + 'static,
+    active_config_path: Option<PathBuf>,
+) -> Arc<AppState> {
     let dev_token = dev_token.map(str::to_owned);
     std::fs::create_dir_all(storage_dir).unwrap();
     let source = format!(
@@ -1849,13 +1938,18 @@ allowed_usernames = ["octocat"]
     for (key, value) in extra_server_secrets {
         server_secret_env.insert((*key).to_string(), (*value).to_string());
     }
-    test_app_state_with_env_lookup_and_server_secret_env(
-        server_settings_from_toml(&source),
-        manifest_run_defaults_from_toml(&source),
-        5,
-        env_lookup,
-        &server_secret_env,
-    )
+    let mut builder = TestAppStateBuilder::new()
+        .runtime_settings(
+            server_settings_from_toml(&source),
+            manifest_run_defaults_from_toml(&source),
+        )
+        .max_concurrent_runs(5)
+        .env_lookup(env_lookup)
+        .server_secret_env(server_secret_env);
+    if let Some(active_config_path) = active_config_path {
+        builder = builder.active_config_path(active_config_path);
+    }
+    builder.build()
 }
 
 #[cfg(unix)]
@@ -2155,6 +2249,67 @@ async fn validate_endpoint_returns_workflow_summary_without_preflight_checks() {
     assert_eq!(body["workflow"]["nodes"], 2);
     assert_eq!(body["workflow"]["edges"], 1);
     assert!(body.get("checks").is_none());
+}
+
+#[tokio::test]
+async fn validate_endpoint_uses_app_state_catalog_for_model_diagnostics() {
+    let llm_catalog_settings: LlmCatalogSettings = toml::from_str(
+        r#"
+[providers.venice]
+display_name = "Venice"
+adapter = "openai_compatible"
+base_url = "https://api.venice.ai/api/v1"
+credentials = ["env:VENICE_API_KEY"]
+
+[models."venice-large"]
+provider = "venice"
+display_name = "Venice Large"
+family = "venice"
+default = true
+
+[models."venice-large".limits]
+context_window = 128000
+
+[models."venice-large".features]
+tools = true
+vision = false
+reasoning = false
+effort = false
+"#,
+    )
+    .expect("catalog fixture should parse");
+    let state = TestAppStateBuilder::new()
+        .llm_catalog_settings(llm_catalog_settings)
+        .build();
+    let app = crate::test_support::build_test_router(state);
+    let dot = r#"digraph Test {
+        graph [goal="Test"]
+        start [shape=Mdiamond]
+        work [model="venice-large", provider="venice", prompt="Do it"]
+        exit  [shape=Msquare]
+        start -> work -> exit
+    }"#;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(api("/validate"))
+                .header("content-type", "application/json")
+                .body(manifest_body(dot))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = response_json!(response, StatusCode::OK).await;
+    let diagnostics = body["workflow"]["diagnostics"].as_array().unwrap();
+
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic["rule"] != "node_model_known"),
+        "custom model/provider should validate against app-state catalog: {body}"
+    );
 }
 
 async fn create_run_for_target(app: &Router, target_path: &str, dot_source: &str) -> String {
@@ -3002,7 +3157,8 @@ async fn run_billing_sums_usage_across_retry_visits_and_uses_latest_model() {
     let stages = body["stages"].as_array().unwrap();
     assert_eq!(stages.len(), 1);
     assert_eq!(stages[0]["stage"]["id"], "verify");
-    assert_eq!(stages[0]["model"]["id"], "gpt-new");
+    assert_eq!(stages[0]["model"]["provider"], "openai");
+    assert_eq!(stages[0]["model"]["model_id"], "gpt-new");
     assert_eq!(stages[0]["billing"]["input_tokens"], 300);
     assert_eq!(stages[0]["billing"]["output_tokens"], 30);
     assert_eq!(stages[0]["billing"]["total_usd_micros"], 330);
@@ -3017,12 +3173,14 @@ async fn run_billing_sums_usage_across_retry_visits_and_uses_latest_model() {
     assert_eq!(by_model.len(), 2);
     let old_model = by_model
         .iter()
-        .find(|entry| entry["model"]["id"] == "gpt-old")
+        .find(|entry| entry["model"]["model_id"] == "gpt-old")
         .unwrap();
     let new_model = by_model
         .iter()
-        .find(|entry| entry["model"]["id"] == "gpt-new")
+        .find(|entry| entry["model"]["model_id"] == "gpt-new")
         .unwrap();
+    assert_eq!(old_model["model"]["provider"], "openai");
+    assert_eq!(new_model["model"]["provider"], "openai");
     assert_eq!(old_model["stages"], 1);
     assert_eq!(old_model["billing"]["input_tokens"], 100);
     assert_eq!(new_model["stages"], 1);
@@ -3468,6 +3626,7 @@ fn create_github_token_app_state_with_env_lookup(
         server_secrets: load_test_server_secrets(server_env_path, HashMap::new()),
         env_lookup: Arc::new(env_lookup),
         github_api_base_url,
+        active_config_path: tempfile::tempdir().unwrap().path().join("settings.toml"),
         http_client: Some(fabro_http::test_http_client().expect("test HTTP client should build")),
         shutdown: tokio_util::sync::CancellationToken::new(),
     };
@@ -8196,6 +8355,86 @@ async fn get_aggregate_billing_returns_zeros_initially() {
     assert!(body["by_model"].as_array().unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn get_aggregate_billing_returns_provider_model_speed_identity() {
+    let state = test_app_state();
+    {
+        let mut agg = state
+            .aggregate_billing
+            .lock()
+            .expect("aggregate billing lock");
+        agg.total_runs = 1;
+        agg.by_model.insert(
+            ModelRef {
+                provider: Provider::Anthropic.id(),
+                model_id: "claude-opus-4-6".to_string(),
+                speed:    None,
+            },
+            ModelBillingTotals {
+                stages:  1,
+                billing: BilledTokenCounts {
+                    input_tokens:       10,
+                    output_tokens:      1,
+                    total_tokens:       11,
+                    reasoning_tokens:   0,
+                    cache_read_tokens:  0,
+                    cache_write_tokens: 0,
+                    total_usd_micros:   Some(11),
+                },
+            },
+        );
+        agg.by_model.insert(
+            ModelRef {
+                provider: Provider::Anthropic.id(),
+                model_id: "claude-opus-4-6".to_string(),
+                speed:    Some(Speed::Fast),
+            },
+            ModelBillingTotals {
+                stages:  1,
+                billing: BilledTokenCounts {
+                    input_tokens:       20,
+                    output_tokens:      2,
+                    total_tokens:       22,
+                    reasoning_tokens:   0,
+                    cache_read_tokens:  0,
+                    cache_write_tokens: 0,
+                    total_usd_micros:   Some(22),
+                },
+            },
+        );
+    }
+    let app = crate::test_support::build_test_router(Arc::clone(&state));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(api("/billing"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = response_json!(response, StatusCode::OK).await;
+    let by_model = body["by_model"].as_array().unwrap();
+
+    assert_eq!(by_model.len(), 2);
+    let standard = by_model
+        .iter()
+        .find(|entry| entry["model"]["speed"].is_null())
+        .unwrap();
+    let fast = by_model
+        .iter()
+        .find(|entry| entry["model"]["speed"] == "fast")
+        .unwrap();
+    assert_eq!(standard["model"]["provider"], "anthropic");
+    assert_eq!(standard["model"]["model_id"], "claude-opus-4-6");
+    assert_eq!(standard["billing"]["input_tokens"], 10);
+    assert_eq!(fast["model"]["provider"], "anthropic");
+    assert_eq!(fast["model"]["model_id"], "claude-opus-4-6");
+    assert_eq!(fast["billing"]["input_tokens"], 20);
+}
+
 #[test]
 fn aggregate_billing_counts_projection_rollup_usage_visits() {
     let mut accumulator = BillingAccumulator::default();
@@ -8214,7 +8453,7 @@ fn aggregate_billing_counts_projection_rollup_usage_visits() {
             fabro_workflow::ProjectionBillingByModel {
                 model:   ModelRef {
                     provider: Provider::OpenAi.id(),
-                    model_id: "gpt-old".to_string(),
+                    model_id: "gpt-5.4".to_string(),
                     speed:    None,
                 },
                 stages:  1,
@@ -8231,8 +8470,8 @@ fn aggregate_billing_counts_projection_rollup_usage_visits() {
             fabro_workflow::ProjectionBillingByModel {
                 model:   ModelRef {
                     provider: Provider::OpenAi.id(),
-                    model_id: "gpt-new".to_string(),
-                    speed:    None,
+                    model_id: "gpt-5.4".to_string(),
+                    speed:    Some(Speed::Fast),
                 },
                 stages:  1,
                 billing: BilledTokenCounts {
@@ -8254,10 +8493,45 @@ fn aggregate_billing_counts_projection_rollup_usage_visits() {
 
     assert_eq!(accumulator.total_runs, 1);
     assert_eq!(accumulator.total_runtime_secs, 2.0);
-    assert_eq!(accumulator.by_model["gpt-old"].stages, 1);
-    assert_eq!(accumulator.by_model["gpt-old"].billing.input_tokens, 100);
-    assert_eq!(accumulator.by_model["gpt-new"].stages, 1);
-    assert_eq!(accumulator.by_model["gpt-new"].billing.input_tokens, 200);
+    assert_eq!(accumulator.by_model.len(), 2);
+    assert_eq!(
+        accumulator.by_model[&ModelRef {
+            provider: Provider::OpenAi.id(),
+            model_id: "gpt-5.4".to_string(),
+            speed:    None,
+        }]
+            .stages,
+        1
+    );
+    assert_eq!(
+        accumulator.by_model[&ModelRef {
+            provider: Provider::OpenAi.id(),
+            model_id: "gpt-5.4".to_string(),
+            speed:    None,
+        }]
+            .billing
+            .input_tokens,
+        100
+    );
+    assert_eq!(
+        accumulator.by_model[&ModelRef {
+            provider: Provider::OpenAi.id(),
+            model_id: "gpt-5.4".to_string(),
+            speed:    Some(Speed::Fast),
+        }]
+            .stages,
+        1
+    );
+    assert_eq!(
+        accumulator.by_model[&ModelRef {
+            provider: Provider::OpenAi.id(),
+            model_id: "gpt-5.4".to_string(),
+            speed:    Some(Speed::Fast),
+        }]
+            .billing
+            .input_tokens,
+        200
+    );
 }
 
 #[tokio::test]

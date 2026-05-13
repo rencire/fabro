@@ -225,6 +225,14 @@ pub fn load_server_runtime_settings(
     resolve_server_runtime_settings(layer, run_overrides, server_overrides)
 }
 
+pub fn load_llm_catalog_settings(path: Option<&Path>) -> Result<model_catalog::LlmCatalogSettings> {
+    let layer = match path {
+        Some(path) => load_settings_path(path)?,
+        None => load_settings_config(None)?,
+    };
+    Ok(llm_catalog_settings_from_layer(&layer))
+}
+
 #[cfg(test)]
 pub fn server_runtime_settings_from_toml(
     source: &str,
@@ -352,10 +360,12 @@ fn model_limits_to_catalog(limits: &LlmModelLimits) -> model_catalog::SettingsMo
 
 fn model_features_to_catalog(features: &LlmModelFeatures) -> model_catalog::SettingsModelFeatures {
     model_catalog::SettingsModelFeatures {
-        tools:     features.tools,
-        vision:    features.vision,
-        reasoning: features.reasoning,
-        effort:    features.effort,
+        tools:            features.tools,
+        vision:           features.vision,
+        reasoning:        features.reasoning,
+        reasoning_effort: features.reasoning_effort,
+        prompt_cache:     features.prompt_cache,
+        effort:           features.effort,
     }
 }
 

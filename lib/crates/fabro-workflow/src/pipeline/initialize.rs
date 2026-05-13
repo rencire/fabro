@@ -10,6 +10,7 @@ use fabro_auth::{
 };
 use fabro_graphviz::graph;
 use fabro_hooks::{HookContext, HookDecision, HookEvent, HookRunner};
+use fabro_model::Catalog;
 use fabro_sandbox::{
     GitSetupIntent, ReadBeforeWriteSandbox, SandboxEventCallback, SandboxSpec,
     reconnect_for_run_with_callback,
@@ -124,6 +125,7 @@ async fn build_registry(
     github_token_refresh_managed: bool,
     graph: &graph::Graph,
     llm_source: Arc<dyn CredentialSource>,
+    catalog: Arc<Catalog>,
     cli_resolver: Option<CredentialResolver>,
 ) -> Result<(Arc<HandlerRegistry>, bool), Error> {
     let no_backend_interviewer = Arc::clone(&interviewer);
@@ -150,20 +152,28 @@ async fn build_registry(
     let build_llm_registry = || {
         let model = spec.model.clone();
         let provider = spec.provider;
+        let provider_id = spec.provider_id.clone();
+        let profile_kind = spec.profile_kind;
         let fallback_chain = spec.fallback_chain.clone();
         let mcp_servers = spec.mcp_servers.clone();
+        let model_controls = spec.model_controls.clone();
         let llm_source_for_api = Arc::clone(&llm_source);
+        let catalog_for_api = Arc::clone(&catalog);
         let steering_hub_for_api = Arc::clone(&steering_hub);
         let tool_env_provider_for_backend = Arc::clone(&tool_env_provider);
         Arc::new(default_registry(interviewer, move || {
             let tool_env_provider = Arc::clone(&tool_env_provider_for_backend);
-            let api = AgentApiBackend::new(
+            let api = AgentApiBackend::new_with_catalog(
                 model.clone(),
                 provider,
+                provider_id.clone(),
+                profile_kind,
                 fallback_chain.clone(),
                 Arc::clone(&llm_source_for_api),
                 Arc::clone(&steering_hub_for_api),
+                Arc::clone(&catalog_for_api),
             )
+            .with_run_model_controls(model_controls.clone())
             .with_tool_env_provider(tool_env_provider.clone())
             .with_mcp_servers(mcp_servers.clone());
             let cli = cli_resolver
@@ -172,6 +182,8 @@ async fn build_registry(
                     || AgentCliBackend::new_from_env(model.clone(), provider),
                     |resolver| AgentCliBackend::new(model.clone(), provider, resolver),
                 )
+                .with_catalog(Arc::clone(&catalog_for_api))
+                .with_run_model_controls(model_controls.clone())
                 .with_tool_env_provider(tool_env_provider.clone(), github_token_refresh_managed);
             let acp = cli_resolver
                 .clone()
@@ -188,7 +200,7 @@ async fn build_registry(
         return Ok((build_llm_registry(), false));
     }
 
-    match llm_source.resolve().await {
+    match llm_source.resolve_for_catalog(catalog.as_ref()).await {
         Ok(result) if result.credentials.is_empty() => {
             if graph_needs_llm {
                 let detail = (!result.auth_issues.is_empty()).then(|| {
@@ -340,6 +352,7 @@ pub async fn initialize(
     options.run_options.git = options.git.clone();
 
     let llm_source = build_llm_source(options.vault.clone());
+    let catalog = Arc::clone(&options.catalog);
     let cli_resolver = options.vault.clone().map(CredentialResolver::new);
     let sandbox_git = Arc::new(SandboxGitRuntime::new());
     let metadata_runtime = Arc::new(RunMetadataRuntime::new());
@@ -350,6 +363,7 @@ pub async fn initialize(
         Some(Arc::new(HookRunner::new(
             options.hooks.clone(),
             Arc::clone(&llm_source),
+            Arc::clone(&catalog),
         )))
     };
 
@@ -502,6 +516,7 @@ pub async fn initialize(
             github_token_refresh_managed,
             &graph,
             Arc::clone(&llm_source),
+            Arc::clone(&catalog),
             cli_resolver,
         )
         .await?
@@ -658,6 +673,7 @@ pub async fn initialize(
         options.run_options.cancel_token.clone(),
         options.llm.provider,
         Arc::clone(&llm_source),
+        catalog,
         sandbox_git,
         metadata_runtime,
         metadata_writer,
@@ -702,8 +718,10 @@ mod tests {
     use fabro_auth::{AuthCredential, AuthDetails};
     use fabro_graphviz::graph::{AttrValue, Edge, Graph, Node};
     use fabro_interview::AutoApproveInterviewer;
+    use fabro_model::catalog::LlmCatalogSettings;
     use fabro_sandbox::SandboxSpec;
     use fabro_store::Database;
+    use fabro_types::settings::run::RunModelControls;
     use fabro_types::{EventBody, RunEvent, RunId, WorkflowSettings, fixtures};
     use fabro_vault::{SecretType, Vault};
     use object_store::memory::InMemory;
@@ -719,6 +737,13 @@ mod tests {
 
     fn test_run_id() -> RunId {
         fixtures::RUN_1
+    }
+
+    fn test_catalog() -> Arc<Catalog> {
+        Arc::new(
+            Catalog::from_builtin_with_overrides(&LlmCatalogSettings::default())
+                .expect("default catalog should build"),
+        )
     }
 
     fn memory_store() -> Arc<Database> {
@@ -862,12 +887,16 @@ mod tests {
             llm:               LlmSpec {
                 model:          "test-model".to_string(),
                 provider:       fabro_llm::Provider::Anthropic,
+                provider_id:    fabro_llm::Provider::Anthropic.id(),
+                profile_kind:   fabro_model::AgentProfileKind::Anthropic,
                 fallback_chain: Vec::new(),
                 mcp_servers:    Vec::new(),
+                model_controls: RunModelControls::default(),
                 dry_run:        true,
             },
             interviewer:       Arc::new(AutoApproveInterviewer::engine()),
             steering_hub:      Arc::new(crate::steering_hub::SteeringHub::new(emitter.clone())),
+            catalog:           test_catalog(),
             lifecycle:         crate::run_options::LifecycleOptions {
                 setup_commands:           vec![command.to_string()],
                 setup_command_timeout_ms: 1_000,
@@ -921,12 +950,16 @@ mod tests {
             llm:               LlmSpec {
                 model:          "test-model".to_string(),
                 provider:       fabro_llm::Provider::Anthropic,
+                provider_id:    fabro_llm::Provider::Anthropic.id(),
+                profile_kind:   fabro_model::AgentProfileKind::Anthropic,
                 fallback_chain: Vec::new(),
                 mcp_servers:    Vec::new(),
+                model_controls: RunModelControls::default(),
                 dry_run:        true,
             },
             interviewer:       Arc::new(AutoApproveInterviewer::engine()),
             steering_hub:      Arc::new(crate::steering_hub::SteeringHub::new(emitter.clone())),
+            catalog:           test_catalog(),
             lifecycle:         crate::run_options::LifecycleOptions {
                 setup_commands:           vec![],
                 setup_command_timeout_ms: 1_000,
@@ -1014,8 +1047,11 @@ mod tests {
             &LlmSpec {
                 model:          "claude-opus-4-6".to_string(),
                 provider:       fabro_llm::Provider::Anthropic,
+                provider_id:    fabro_llm::Provider::Anthropic.id(),
+                profile_kind:   fabro_model::AgentProfileKind::Anthropic,
                 fallback_chain: Vec::new(),
                 mcp_servers:    Vec::new(),
+                model_controls: RunModelControls::default(),
                 dry_run:        false,
             },
             Arc::new(AutoApproveInterviewer::engine()),
@@ -1024,6 +1060,7 @@ mod tests {
             false,
             &graph,
             Arc::new(VaultCredentialSource::new(Arc::clone(&vault))),
+            test_catalog(),
             Some(CredentialResolver::new(vault)),
         )
         .await
@@ -1129,12 +1166,16 @@ mod tests {
             llm:               LlmSpec {
                 model:          "fake-acp".to_string(),
                 provider:       fabro_llm::Provider::OpenAi,
+                provider_id:    fabro_llm::Provider::OpenAi.id(),
+                profile_kind:   fabro_model::AgentProfileKind::OpenAi,
                 fallback_chain: Vec::new(),
                 mcp_servers:    Vec::new(),
+                model_controls: RunModelControls::default(),
                 dry_run:        false,
             },
             interviewer:       Arc::new(AutoApproveInterviewer::engine()),
             steering_hub:      Arc::new(crate::steering_hub::SteeringHub::new(emitter)),
+            catalog:           test_catalog(),
             lifecycle:         crate::run_options::LifecycleOptions {
                 setup_commands:           Vec::new(),
                 setup_command_timeout_ms: 1_000,
@@ -1225,12 +1266,16 @@ mod tests {
             llm:               LlmSpec {
                 model:          "test-model".to_string(),
                 provider:       fabro_llm::Provider::Anthropic,
+                provider_id:    fabro_llm::Provider::Anthropic.id(),
+                profile_kind:   fabro_model::AgentProfileKind::Anthropic,
                 fallback_chain: Vec::new(),
                 mcp_servers:    Vec::new(),
+                model_controls: RunModelControls::default(),
                 dry_run:        true,
             },
             interviewer:       Arc::new(AutoApproveInterviewer::engine()),
             steering_hub:      Arc::new(crate::steering_hub::SteeringHub::new(emitter.clone())),
+            catalog:           test_catalog(),
             lifecycle:         crate::run_options::LifecycleOptions {
                 setup_commands:           vec!["true".to_string()],
                 setup_command_timeout_ms: 1_000,
@@ -1339,12 +1384,16 @@ mod tests {
             llm: LlmSpec {
                 model:          "test-model".to_string(),
                 provider:       fabro_llm::Provider::Anthropic,
+                provider_id:    fabro_llm::Provider::Anthropic.id(),
+                profile_kind:   fabro_model::AgentProfileKind::Anthropic,
                 fallback_chain: Vec::new(),
                 mcp_servers:    Vec::new(),
+                model_controls: RunModelControls::default(),
                 dry_run:        true,
             },
             interviewer: Arc::new(AutoApproveInterviewer::engine()),
             steering_hub: Arc::new(crate::steering_hub::SteeringHub::new(emitter.clone())),
+            catalog: test_catalog(),
             lifecycle: crate::run_options::LifecycleOptions {
                 setup_commands:           vec!["sleep 5".to_string()],
                 setup_command_timeout_ms: 5_000,
@@ -1402,12 +1451,16 @@ mod tests {
             llm: LlmSpec {
                 model:          "test-model".to_string(),
                 provider:       fabro_llm::Provider::Anthropic,
+                provider_id:    fabro_llm::Provider::Anthropic.id(),
+                profile_kind:   fabro_model::AgentProfileKind::Anthropic,
                 fallback_chain: Vec::new(),
                 mcp_servers:    Vec::new(),
+                model_controls: RunModelControls::default(),
                 dry_run:        true,
             },
             interviewer: Arc::new(AutoApproveInterviewer::engine()),
             steering_hub: Arc::new(crate::steering_hub::SteeringHub::new(emitter.clone())),
+            catalog: test_catalog(),
             lifecycle: crate::run_options::LifecycleOptions {
                 setup_commands:           vec![],
                 setup_command_timeout_ms: 5_000,

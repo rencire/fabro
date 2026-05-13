@@ -402,7 +402,11 @@ async fn create_run(
     info!(run_id = %run_id, "Run created");
 
     let web_url = state.run_web_url(&run_id);
-    let configured_providers = state.llm_source.configured_providers().await;
+    let catalog = state.catalog();
+    let configured_providers = state
+        .llm_source
+        .configured_providers_for_catalog(catalog.as_ref())
+        .await;
     let mut create_input =
         run_manifest::create_run_input(prepared.clone(), configured_providers, web_url.clone());
     create_input.run_id = Some(run_id);
@@ -419,10 +423,11 @@ async fn create_run(
             .into_response();
         }
     };
-    let created = match Box::pin(operations::create(
+    let created = match Box::pin(operations::create_with_catalog(
         state.store.as_ref(),
         create_input,
         storage_root,
+        catalog,
     ))
     .await
     {
@@ -513,7 +518,11 @@ async fn run_preflight(
         Ok(prepared) => prepared,
         Err(err) => return ApiError::bad_request(err.to_string()).into_response(),
     };
-    let validated = match run_manifest::validate_prepared_manifest(&prepared, RenderMode::Strict) {
+    let validated = match run_manifest::validate_prepared_manifest(
+        &prepared,
+        RenderMode::Strict,
+        state.catalog(),
+    ) {
         Ok(validated) => validated,
         Err(WorkflowError::Parse(_)) => {
             return ApiError::bad_request("Validation failed").into_response();
@@ -540,14 +549,17 @@ async fn validate_run_manifest(
         Ok(prepared) => prepared,
         Err(err) => return ApiError::bad_request(err.to_string()).into_response(),
     };
-    let validated =
-        match run_manifest::validate_prepared_manifest(&prepared, RenderMode::Structural) {
-            Ok(validated) => validated,
-            Err(WorkflowError::Parse(_)) => {
-                return ApiError::bad_request("Validation failed").into_response();
-            }
-            Err(err) => return ApiError::bad_request(err.to_string()).into_response(),
-        };
+    let validated = match run_manifest::validate_prepared_manifest(
+        &prepared,
+        RenderMode::Structural,
+        state.catalog(),
+    ) {
+        Ok(validated) => validated,
+        Err(WorkflowError::Parse(_)) => {
+            return ApiError::bad_request("Validation failed").into_response();
+        }
+        Err(err) => return ApiError::bad_request(err.to_string()).into_response(),
+    };
     (
         StatusCode::OK,
         Json(run_manifest::validate_response(&prepared, &validated)),

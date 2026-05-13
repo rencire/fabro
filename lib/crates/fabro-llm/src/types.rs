@@ -368,7 +368,7 @@ impl<'de> Deserialize<'de> for FinishReason {
 
 // --- 3.9 TokenCounts ---
 
-pub use fabro_model::TokenCounts;
+pub use fabro_model::{Speed, TokenCounts};
 
 // --- 3.10 ResponseFormat ---
 
@@ -430,7 +430,7 @@ pub struct Request {
     pub max_tokens:       Option<i64>,
     pub stop_sequences:   Option<Vec<String>>,
     pub reasoning_effort: Option<ReasoningEffort>,
-    pub speed:            Option<String>,
+    pub speed:            Option<Speed>,
     pub metadata:         Option<HashMap<String, String>>,
     pub provider_options: Option<serde_json::Value>,
 }
@@ -617,7 +617,7 @@ impl StreamEvent {
 
 // --- 2.9 Model (re-exported from fabro-model) ---
 
-pub use fabro_model::{Model, ModelCosts, ModelFeatures, ModelLimits};
+pub use fabro_model::{Model, ModelCosts, ModelFeatures, ModelLimits, ReasoningEffortFeature};
 
 // --- 4.7 Timeouts ---
 

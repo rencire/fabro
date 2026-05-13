@@ -166,12 +166,14 @@ pub(crate) fn prepare_manifest(
 pub(crate) fn validate_prepared_manifest(
     prepared: &PreparedManifest,
     mode: RenderMode,
+    catalog: Arc<Catalog>,
 ) -> Result<Validated, WorkflowError> {
     validate(ValidateInput {
         workflow: WorkflowInput::Bundled(prepared.workflow_input.clone()),
         settings: prepared.settings.clone(),
         cwd: prepared.cwd.clone(),
         custom_transforms: Vec::new(),
+        catalog,
         mode,
     })
 }
@@ -472,8 +474,11 @@ async fn build_preflight_report(
         ));
     }
 
-    let configured_providers = state.llm_source.configured_providers().await;
     let catalog = state.catalog();
+    let configured_providers = state
+        .llm_source
+        .configured_providers_for_catalog(catalog.as_ref())
+        .await;
     let materialized = materialize_run(
         prepared.settings.clone(),
         graph,
@@ -1316,6 +1321,7 @@ fn report_to_api(report: &CheckReport) -> types::PreflightCheckReport {
 #[cfg(test)]
 mod tests {
     use fabro_model::Provider;
+    use fabro_model::catalog::LlmCatalogSettings;
 
     use super::*;
 
@@ -1367,6 +1373,10 @@ mod tests {
 
     fn default_settings_fixture() -> RunLayer {
         RunLayer::default()
+    }
+
+    fn test_catalog() -> Arc<Catalog> {
+        Arc::new(Catalog::from_builtin_with_overrides(&LlmCatalogSettings::default()).unwrap())
     }
 
     fn manifest_workflow() -> types::ManifestWorkflow {
@@ -1427,7 +1437,8 @@ enabled = {clone_enabled}
             &manifest,
         )
         .unwrap();
-        let validated = validate_prepared_manifest(&prepared, RenderMode::Strict).unwrap();
+        let validated =
+            validate_prepared_manifest(&prepared, RenderMode::Strict, test_catalog()).unwrap();
         let resolved = materialize_run(
             prepared.settings.clone(),
             validated.graph(),
@@ -1892,7 +1903,8 @@ app_id = "fixture-app-id"
             &invalid_manifest(),
         )
         .unwrap();
-        let validated = validate_prepared_manifest(&prepared, RenderMode::Strict).unwrap();
+        let validated =
+            validate_prepared_manifest(&prepared, RenderMode::Strict, test_catalog()).unwrap();
 
         assert!(validated.has_errors());
 
@@ -1937,7 +1949,8 @@ issues = "read"
             &manifest,
         )
         .unwrap();
-        let validated = validate_prepared_manifest(&prepared, RenderMode::Strict).unwrap();
+        let validated =
+            validate_prepared_manifest(&prepared, RenderMode::Strict, test_catalog()).unwrap();
         assert!(!validated.has_errors());
 
         let (response, _ok) = run_preflight(state.as_ref(), &prepared, &validated)
@@ -1985,7 +1998,8 @@ provider = "local"
             &manifest,
         )
         .unwrap();
-        let validated = validate_prepared_manifest(&prepared, RenderMode::Strict).unwrap();
+        let validated =
+            validate_prepared_manifest(&prepared, RenderMode::Strict, test_catalog()).unwrap();
 
         assert!(!validated.has_errors());
 
@@ -2026,7 +2040,8 @@ provider = "daytona"
             &manifest,
         )
         .unwrap();
-        let validated = validate_prepared_manifest(&prepared, RenderMode::Strict).unwrap();
+        let validated =
+            validate_prepared_manifest(&prepared, RenderMode::Strict, test_catalog()).unwrap();
 
         let (response, _ok) = run_preflight(state.as_ref(), &prepared, &validated)
             .await
@@ -2099,7 +2114,8 @@ digraph Demo {
             &manifest,
         )
         .unwrap();
-        let validated = validate_prepared_manifest(&prepared, RenderMode::Strict).unwrap();
+        let validated =
+            validate_prepared_manifest(&prepared, RenderMode::Strict, test_catalog()).unwrap();
 
         let (response, ok) = run_preflight(state.as_ref(), &prepared, &validated)
             .await
@@ -2140,7 +2156,8 @@ digraph Demo {
             &manifest,
         )
         .unwrap();
-        let validated = validate_prepared_manifest(&prepared, RenderMode::Strict).unwrap();
+        let validated =
+            validate_prepared_manifest(&prepared, RenderMode::Strict, test_catalog()).unwrap();
 
         let (response, ok) = run_preflight(state.as_ref(), &prepared, &validated)
             .await
@@ -2211,7 +2228,8 @@ digraph Demo {
             &manifest,
         )
         .unwrap();
-        let validated = validate_prepared_manifest(&prepared, RenderMode::Strict).unwrap();
+        let validated =
+            validate_prepared_manifest(&prepared, RenderMode::Strict, test_catalog()).unwrap();
 
         let (response, ok) = run_preflight(state.as_ref(), &prepared, &validated)
             .await

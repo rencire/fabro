@@ -57,7 +57,7 @@ use fabro_llm::types::{
     ToolDefinition,
 };
 use fabro_model::catalog::LlmCatalogSettings;
-use fabro_model::{BilledTokenCounts, Catalog, ModelTestMode, ProviderId};
+use fabro_model::{BilledTokenCounts, Catalog, ModelRef, ModelTestMode, ProviderId};
 use fabro_redact::redact_jsonl_line;
 use fabro_sandbox::daytona::{self, DaytonaSandbox};
 use fabro_sandbox::details::sandbox_details;
@@ -243,7 +243,7 @@ struct ModelBillingTotals {
 struct BillingAccumulator {
     total_runs:         i64,
     total_runtime_secs: f64,
-    by_model:           HashMap<String, ModelBillingTotals>,
+    by_model:           HashMap<ModelRef, ModelBillingTotals>,
 }
 
 pub(crate) type RegistryFactoryOverride =
@@ -532,6 +532,7 @@ pub struct AppState {
     catalog: RwLock<Arc<Catalog>>,
     pub(crate) env_lookup: EnvLookup,
     pub(crate) github_api_base_url: String,
+    active_config_path: PathBuf,
     http_client: Option<fabro_http::HttpClient>,
     shutdown: CancellationToken,
     shutting_down: AtomicBool,
@@ -596,6 +597,7 @@ pub(crate) struct AppStateConfig {
     pub(crate) server_secrets:            ServerSecrets,
     pub(crate) env_lookup:                EnvLookup,
     pub(crate) github_api_base_url:       Option<String>,
+    pub(crate) active_config_path:        PathBuf,
     pub(crate) http_client:               Option<fabro_http::HttpClient>,
     pub(crate) shutdown:                  CancellationToken,
 }
@@ -615,10 +617,7 @@ fn accumulate_billing_rollup(
     accumulator.total_runs += 1;
     accumulator.total_runtime_secs += rollup.runtime_ms as f64 / 1000.0;
     for model in &rollup.by_model {
-        let entry = accumulator
-            .by_model
-            .entry(model.model.model_id.clone())
-            .or_default();
+        let entry = accumulator.by_model.entry(model.model.clone()).or_default();
         entry.stages += model.stages;
         entry.billing.add_counts(&model.billing);
     }
@@ -668,6 +667,10 @@ impl AppState {
         Arc::clone(&self.catalog.read().expect("catalog lock poisoned"))
     }
 
+    pub(crate) fn active_config_path(&self) -> &std::path::Path {
+        &self.active_config_path
+    }
+
     pub(crate) fn manifest_run_settings(&self) -> std::result::Result<RunNamespace, SharedError> {
         self.manifest_run_settings
             .read()
@@ -701,7 +704,7 @@ impl AppState {
     }
 
     pub(crate) async fn resolve_llm_client(&self) -> anyhow::Result<LlmClientResult> {
-        resolve_llm_client_from_source(self.llm_source.as_ref()).await
+        resolve_llm_client_from_source(self.llm_source.as_ref(), self.catalog()).await
     }
 
     pub(crate) fn vault_or_env(&self, name: &str) -> Option<String> {
@@ -864,12 +867,13 @@ impl AppState {
 
 async fn resolve_llm_client_from_source(
     source: &dyn CredentialSource,
+    catalog: Arc<Catalog>,
 ) -> anyhow::Result<LlmClientResult> {
     let resolved = source
-        .resolve()
+        .resolve_for_catalog(catalog.as_ref())
         .await
         .context("resolving LLM credentials")?;
-    let client = LlmClient::from_credentials(resolved.credentials)
+    let client = LlmClient::from_credentials_with_catalog(resolved.credentials, catalog)
         .await
         .context("creating LLM client")?;
 
@@ -1524,6 +1528,7 @@ pub(crate) fn build_app_state(config: AppStateConfig) -> anyhow::Result<Arc<AppS
         server_secrets,
         env_lookup,
         github_api_base_url,
+        active_config_path,
         http_client,
         shutdown,
     } = config;
@@ -1591,6 +1596,7 @@ pub(crate) fn build_app_state(config: AppStateConfig) -> anyhow::Result<Arc<AppS
         catalog: RwLock::new(current_catalog),
         env_lookup: Arc::clone(&env_lookup),
         github_api_base_url,
+        active_config_path,
         http_client,
         shutdown,
         shutting_down: AtomicBool::new(false),
@@ -2578,6 +2584,7 @@ fn worker_command(
     }
     let value: &'static str = server_destination.into();
     cmd.env(EnvVars::FABRO_LOG_DESTINATION, value);
+    cmd.env(EnvVars::FABRO_CONFIG, state.active_config_path());
     cmd.env_remove(EnvVars::FABRO_WORKER_TOKEN);
     cmd.env(EnvVars::FABRO_WORKER_TOKEN, worker_token);
     if let Some(pem) = state.server_secret(EnvVars::GITHUB_APP_PRIVATE_KEY) {
@@ -3008,6 +3015,7 @@ async fn execute_run_in_process(state: Arc<AppState>, run_id: RunId) {
         github_app,
         github_permissions,
         vault: Some(Arc::clone(&state.vault)),
+        catalog: state.catalog(),
         on_node: None,
         registry_override,
     };

@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use fabro_config::Storage;
 use fabro_graphviz::graph::{AttrValue, Graph};
+use fabro_model::catalog::LlmCatalogSettings;
 use fabro_model::{Catalog, ProviderId};
 use fabro_sandbox::SandboxProvider;
 use fabro_store::Database;
@@ -74,6 +75,7 @@ struct PersistCreateOptions {
     fork_source_ref:      Option<ForkSourceRef>,
     provenance:           Option<RunProvenance>,
     configured_providers: Vec<ProviderId>,
+    catalog:              Arc<Catalog>,
 }
 
 /// Resolve workflow inputs, normalize settings, and persist a run directory.
@@ -81,6 +83,21 @@ pub async fn create(
     store: &Database,
     request: CreateRunInput,
     storage_root: PathBuf,
+) -> Result<CreatedRun, Error> {
+    let catalog = Arc::new(
+        Catalog::from_builtin_with_overrides(&LlmCatalogSettings::default())
+            .map_err(|err| Error::engine(format!("building default LLM catalog: {err}")))?,
+    );
+    Box::pin(create_with_catalog(store, request, storage_root, catalog)).await
+}
+
+/// Resolve workflow inputs, normalize settings using a caller-provided catalog,
+/// and persist a run directory.
+pub async fn create_with_catalog(
+    store: &Database,
+    request: CreateRunInput,
+    storage_root: PathBuf,
+    catalog: Arc<Catalog>,
 ) -> Result<CreatedRun, Error> {
     let resolved = resolve_workflow(ResolveWorkflowInput {
         workflow: request.workflow,
@@ -144,6 +161,7 @@ pub async fn create(
                 fork_source_ref,
                 provenance,
                 configured_providers,
+                catalog,
             },
             current_dir,
             file_resolver,
@@ -304,6 +322,7 @@ fn create_from_source(
         Some(&options.settings),
         goal_override,
         RenderMode::Strict,
+        &options.catalog,
     )?;
 
     if validated.has_errors() {
@@ -323,6 +342,7 @@ pub(super) fn preprocess_and_validate(
     settings: Option<&WorkflowSettings>,
     goal_override: Option<&str>,
     render_mode: RenderMode,
+    catalog: &Arc<Catalog>,
 ) -> Result<Validated, Error> {
     let inputs = run_inputs(settings);
     let template_ctx = TemplateContext::for_input_scan(inputs.clone());
@@ -354,8 +374,9 @@ pub(super) fn preprocess_and_validate(
         file_resolver,
         inputs,
         custom_transforms,
+        catalog: Arc::clone(catalog),
     })?;
-    let mut validated = pipeline::validate(transformed, &[]);
+    let mut validated = pipeline::validate(transformed, catalog.as_ref(), &[]);
     if !template_diagnostics.is_empty() {
         validated.prepend_diagnostics(template_diagnostics);
     }
@@ -425,12 +446,13 @@ fn persist_validated(
         fork_source_ref,
         provenance,
         configured_providers,
+        catalog,
     } = options;
 
     let settings = materialize_run(
         settings,
         validated.graph(),
-        Catalog::builtin(),
+        catalog.as_ref(),
         &configured_providers,
     );
 
@@ -508,6 +530,10 @@ mod tests {
             .expect("default settings should resolve")
     }
 
+    fn test_catalog() -> Arc<Catalog> {
+        Arc::new(Catalog::from_builtin_with_overrides(&LlmCatalogSettings::default()).unwrap())
+    }
+
     fn validate_dot(dot_source: &str, settings: WorkflowSettings) -> Validated {
         validate(ValidateInput {
             workflow: WorkflowInput::DotSource {
@@ -517,6 +543,7 @@ mod tests {
             settings,
             cwd: PathBuf::from("."),
             custom_transforms: Vec::new(),
+            catalog: test_catalog(),
             mode: RenderMode::Structural,
         })
         .unwrap()
@@ -580,6 +607,7 @@ mod tests {
             Some(&WorkflowSettings::default()),
             None,
             RenderMode::Strict,
+            &test_catalog(),
         );
 
         let Err(err) = result else {
@@ -694,6 +722,7 @@ mod tests {
             settings:          WorkflowSettings::default(),
             cwd:               PathBuf::from("."),
             custom_transforms: Vec::new(),
+            catalog:           test_catalog(),
             mode:              RenderMode::Strict,
         });
         assert!(result.is_err());
@@ -738,6 +767,7 @@ mod tests {
             settings:          WorkflowSettings::default(),
             cwd:               PathBuf::from("."),
             custom_transforms: vec![Box::new(TagTransform)],
+            catalog:           test_catalog(),
             mode:              RenderMode::Strict,
         })
         .unwrap();
@@ -772,6 +802,7 @@ mod tests {
             settings:          WorkflowSettings::default(),
             cwd:               dir.path().to_path_buf(),
             custom_transforms: Vec::new(),
+            catalog:           test_catalog(),
             mode:              RenderMode::Strict,
         })
         .unwrap();
@@ -813,6 +844,7 @@ mod tests {
             settings:          WorkflowSettings::default(),
             cwd:               PathBuf::from("."),
             custom_transforms: Vec::new(),
+            catalog:           test_catalog(),
             mode:              RenderMode::Strict,
         })
         .unwrap();
