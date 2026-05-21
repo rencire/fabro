@@ -18,5 +18,13 @@ export interface WorkflowRef {
     'slug': string | null;
     'name': string | null;
     'graph_name': string | null;
+    /**
+     * Number of nodes in the workflow graph.
+     */
+    'node_count': number;
+    /**
+     * Number of edges in the workflow graph.
+     */
+    'edge_count': number;
 }
 

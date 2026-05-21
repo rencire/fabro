@@ -7987,7 +7987,7 @@ components:
 
     WorkflowRef:
       type: object
-      required: [slug, name, graph_name]
+      required: [slug, name, graph_name, node_count, edge_count]
       properties:
         slug:
           type: ["string", "null"]
@@ -7995,6 +7995,14 @@ components:
           type: ["string", "null"]
         graph_name:
           type: ["string", "null"]
+        node_count:
+          type: integer
+          format: int64
+          description: Number of nodes in the workflow graph.
+        edge_count:
+          type: integer
+          format: int64
+          description: Number of edges in the workflow graph.
 
     AutomationRef:
       type: object

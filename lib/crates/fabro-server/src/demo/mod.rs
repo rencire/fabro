@@ -1117,6 +1117,8 @@ mod runs {
                 slug:       Some(workflow_slug.into()),
                 name:       Some(workflow_name.into()),
                 graph_name: None,
+                node_count: 0,
+                edge_count: 0,
             },
             automation: None,
             repository: Some(RepositoryRef::from_origin_and_source(
