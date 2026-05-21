@@ -6,25 +6,39 @@ import {
 import { Thread, makeMarkdownText } from "@assistant-ui/react-ui";
 import { XMarkIcon } from "@heroicons/react/24/outline";
 
-import { createScriptedAdapter } from "../lib/chats-runtime";
-import { useAskFabro } from "../lib/ask-fabro-context";
+import { createScriptedAdapter } from "../../lib/chats-runtime";
+import type { Chat } from "../../lib/chats-types";
 import SidebarComposer from "./sidebar-composer";
 import ToolFallback from "./tool-fallback";
-import type { Chat } from "../lib/types";
 
 const MarkdownText = makeMarkdownText();
 
+/** The sidebar runs against an empty, store-less chat: the scripted adapter
+ * only reads `scriptIndex`, advanced locally per reply via `scriptIndexRef`. */
 const EMPTY_CHAT: Chat = {
   id: "ask-fabro",
   title: "",
   createdAt: 0,
   scriptIndex: 0,
+  seedMessages: [],
+  pendingResponse: false,
 };
 
 const SIDEBAR_WIDTH = 420;
 
-export default function AskFabroSidebar() {
-  const { isOpen, close } = useAskFabro();
+/**
+ * Right-docked "Ask Fabro" assistant panel. An animated-width column that
+ * collapses to zero when closed; renders assistant-ui's `<Thread>` with a
+ * stripped composer scoped to the narrow column via the `.ask-fabro-sidebar`
+ * CSS in app.css.
+ */
+export default function AskFabroSidebar({
+  isOpen,
+  onClose,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+}) {
   const scriptIndexRef = useRef(0);
   const adapter = useMemo(
     () =>
@@ -52,7 +66,7 @@ export default function AskFabroSidebar() {
         <header className="flex h-12 shrink-0 items-center justify-end px-2">
           <button
             type="button"
-            onClick={close}
+            onClick={onClose}
             aria-label="Close assistant"
             className="inline-flex size-8 items-center justify-center rounded-md text-fg-3 transition-colors hover:bg-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-500"
           >
