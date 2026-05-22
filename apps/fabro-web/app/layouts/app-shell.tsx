@@ -322,11 +322,12 @@ function ShellMain({
   fullHeight: boolean;
   maxWidth: string;
 }) {
-  const { sidebarWidth } = useAskFabroLayout();
+  const { sidebarWidth, isResizing } = useAskFabroLayout();
   return (
     <main
       className={classNames(
-        "transition-[padding] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]",
+        !isResizing &&
+          "transition-[padding] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]",
         fullHeight && "min-h-0 flex-1",
       )}
       style={{ paddingRight: sidebarWidth }}

@@ -371,8 +371,11 @@ export default function RunDetail({ params }: { params: { id: string } }) {
   const askAvailable = askFabro?.available ?? false;
   const askDefaultModel = askFabro?.default_model ?? null;
   const [askOpen, setAskOpen] = useState(false);
-  const sidebarWidth = askAvailable && askOpen ? SIDEBAR_WIDTH : 0;
-  const { setSidebarWidth } = useAskFabroLayout();
+  // User-chosen sidebar width; persists across open/close. Draggable between
+  // SIDEBAR_WIDTH and SIDEBAR_MAX_WIDTH via the sidebar's left-edge handle.
+  const [askWidth, setAskWidth] = useState(SIDEBAR_WIDTH);
+  const sidebarWidth = askAvailable && askOpen ? askWidth : 0;
+  const { setSidebarWidth, isResizing } = useAskFabroLayout();
   const matches = useMatches();
   const basePath = `/runs/${params.id}`;
   const previewMutation = usePreviewRun(params.id);
@@ -641,7 +644,7 @@ export default function RunDetail({ params }: { params: { id: string } }) {
         <AskFabroTriggerButton
           askFabro={askFabro}
           askOpen={askOpen}
-          onOpen={() => setAskOpen(true)}
+          onToggle={() => setAskOpen((open) => !open)}
         />
       </div>
 
@@ -708,7 +711,11 @@ export default function RunDetail({ params }: { params: { id: string } }) {
       </div>
 
       <div
-        className="fixed bottom-0 left-0 z-30 border-t border-line bg-page transition-[right] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+        className={`fixed bottom-0 left-0 z-30 border-t border-line bg-page ${
+          isResizing
+            ? ""
+            : "transition-[right] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+        }`}
         style={{ right: sidebarWidth }}
       >
         {hasPendingQuestions ? (
@@ -727,6 +734,8 @@ export default function RunDetail({ params }: { params: { id: string } }) {
             onClose={() => setAskOpen(false)}
             runId={params.id}
             defaultModel={askDefaultModel}
+            width={askWidth}
+            onWidthChange={setAskWidth}
           />
         </div>
       )}
@@ -752,20 +761,21 @@ const ASK_FABRO_UNAVAILABLE_TOOLTIPS: Record<
 function AskFabroTriggerButton({
   askFabro,
   askOpen,
-  onOpen,
+  onToggle,
 }: {
   askFabro: AskFabro | null;
   askOpen: boolean;
-  onOpen: () => void;
+  onToggle: () => void;
 }) {
   const available = askFabro?.available ?? false;
-  const disabled = !available || askOpen;
+  const disabled = !available;
   const unavailableReason = askFabro?.unavailable_reason ?? null;
   const button = (
     <button
       type="button"
-      onClick={onOpen}
+      onClick={onToggle}
       disabled={disabled}
+      aria-expanded={askOpen}
       className={classNames(
         SECONDARY_BUTTON_CLASS,
         "disabled:cursor-not-allowed disabled:opacity-60",
