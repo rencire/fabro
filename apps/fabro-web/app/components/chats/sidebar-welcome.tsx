@@ -9,25 +9,25 @@ const EXAMPLE_PROMPTS = [
     heading: "Surface errors",
     description: "Find errors, warnings, and failed steps in this run.",
     prompt:
-      "Walk me through any errors, warnings, or failed steps in this run and what caused them.",
+      "Analyze this workflow run for any errors, exceptions, failed operations, or unexpected behavior. Include details about what went wrong, when it occurred, and potential causes or fixes.",
   },
   {
     heading: "Analyze performance",
     description: "Spot the slowest stages and where time was spent.",
     prompt:
-      "Which stages were the slowest, and where did this run spend most of its time?",
+      "Analyze the performance of this workflow run, including tool execution times, API call latencies, timeouts, and any bottlenecks. Compare timing across similar operations and identify optimization opportunities.",
   },
   {
     heading: "Review key decisions",
     description: "Recap the important choices the agent made.",
     prompt:
-      "What were the key decisions the agent made during this run, and why?",
+      "Trace the workflow run flow, including key decision points, branching logic, tool selection reasoning, and how the assistant responded to different inputs or contexts.",
   },
   {
     heading: "Suggest improvements",
     description: "Ideas to make this workflow faster and more reliable.",
     prompt:
-      "Suggest improvements to make this workflow faster and more reliable.",
+      "Provide recommendations for improving this workflow, including better graph design, prompting strategies, more efficient tool usage, error handling improvements, and ways to optimize the overall user experience.",
   },
 ];
 
