@@ -344,6 +344,28 @@ fn main() {
         ("CommandTermination", "fabro_types::CommandTermination", &[]),
         ("StageModelUsage", "fabro_types::StageModelUsage", &[]),
         ("StageProjection", "fabro_types::StageProjection", &[]),
+        ("TodoListProjection", "fabro_types::TodoListProjection", &[]),
+        ("SubAgentProjection", "fabro_types::SubAgentProjection", &[]),
+        ("SubAgentStatus", "fabro_types::SubAgentStatus", &[]),
+        ("SkillsProjection", "fabro_types::SkillsProjection", &[]),
+        ("ActivatedSkill", "fabro_types::ActivatedSkill", &[]),
+        ("AgentSkillSummary", "fabro_types::AgentSkillSummary", &[]),
+        (
+            "AgentSkillActivationSource",
+            "fabro_types::AgentSkillActivationSource",
+            &[],
+        ),
+        (
+            "McpServerProjection",
+            "fabro_types::McpServerProjection",
+            &[],
+        ),
+        ("McpServerStatus", "fabro_types::McpServerStatus", &[]),
+        (
+            "AgentMcpToolSummary",
+            "fabro_types::AgentMcpToolSummary",
+            &[],
+        ),
         ("SecretMetadata", "fabro_types::SecretMetadata", &[]),
         ("InterviewOption", "fabro_types::InterviewOption", &[]),
         (

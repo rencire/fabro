@@ -15,21 +15,15 @@
 
 // May contain unused imports in some cases
 // @ts-ignore
-import type { BillingSpeed } from './billing-speed';
+import type { ActivatedSkill } from './activated-skill';
 // May contain unused imports in some cases
 // @ts-ignore
-import type { ReasoningEffort } from './reasoning-effort';
+import type { AgentSkillSummary } from './agent-skill-summary';
 
 /**
- * Provider, model, and request-control metadata recorded for a stage attempt.
+ * Agent skills discovered and activated during a stage.
  */
-export interface StageModelUsage {
-    /**
-     * Source of the stage\'s model usage metadata.
-     */
-    'mode': string;
-    'provider'?: string | null;
-    'model'?: string | null;
-    'reasoning_effort'?: ReasoningEffort | null;
-    'speed'?: BillingSpeed | null;
+export interface SkillsProjection {
+    'available': Array<AgentSkillSummary>;
+    'activated': Array<ActivatedSkill>;
 }

@@ -15,21 +15,16 @@
 
 // May contain unused imports in some cases
 // @ts-ignore
-import type { BillingSpeed } from './billing-speed';
+import type { AgentMcpToolSummary } from './agent-mcp-tool-summary';
 // May contain unused imports in some cases
 // @ts-ignore
-import type { ReasoningEffort } from './reasoning-effort';
+import type { McpServerStatusFailed } from './mcp-server-status-failed';
+// May contain unused imports in some cases
+// @ts-ignore
+import type { McpServerStatusReady } from './mcp-server-status-ready';
 
 /**
- * Provider, model, and request-control metadata recorded for a stage attempt.
+ * @type McpServerStatus
+ * Projected MCP server readiness status.
  */
-export interface StageModelUsage {
-    /**
-     * Source of the stage\'s model usage metadata.
-     */
-    'mode': string;
-    'provider'?: string | null;
-    'model'?: string | null;
-    'reasoning_effort'?: ReasoningEffort | null;
-    'speed'?: BillingSpeed | null;
-}
+export type McpServerStatus = { kind: 'failed' } & McpServerStatusFailed | { kind: 'ready' } & McpServerStatusReady;

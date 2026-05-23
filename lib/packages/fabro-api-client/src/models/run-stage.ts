@@ -49,9 +49,6 @@ export interface RunStage {
      * 1-based visit count; bumped each time the workflow re-enters this node.
      */
     'visit': number;
-    /**
-     * Provider, model, and request controls recorded for the latest stage attempt.
-     */
     'provider_used'?: StageModelUsage | null;
     /**
      * Wall-clock time the latest attempt of this stage started, if known.
