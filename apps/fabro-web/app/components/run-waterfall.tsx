@@ -1,10 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { StageState, type RunStage } from "@qltysh/fabro-api-client";
 
+import { HoverCard, PopoverHeader, PopoverRow, PopoverRows } from "./ui";
 import { isVisibleStage } from "../data/runs";
 import { formatAbsoluteTs, formatDurationMs } from "../lib/format";
-import { formatStageLabel } from "../lib/stage-sidebar";
+import {
+  formatStageLabel,
+  stageStatusLabel,
+  stageStatusTone,
+} from "../lib/stage-sidebar";
 import { deriveRunPhases, type RunPhase } from "../lib/run-phases";
 import type { EventEnvelope } from "@qltysh/fabro-api-client";
 
@@ -25,7 +30,7 @@ interface Row {
   durationMs: number | null;
   barClass: string;
   href: string | null;
-  tooltip: string;
+  popover: ReactNode;
 }
 
 const MIN_BAR_WIDTH_PCT = 0.4;
@@ -71,21 +76,70 @@ function chooseTickIntervalMs(rangeMs: number): number {
   return 60 * 60_000;
 }
 
+function phasePopover(phase: RunPhase, durationMs: number | null, inFlight: boolean): ReactNode {
+  return (
+    <>
+      <PopoverHeader>{phase.label}</PopoverHeader>
+      <PopoverRows>
+        <PopoverRow label="Started">
+          {formatAbsoluteTs(new Date(phase.startMs).toISOString())}
+        </PopoverRow>
+        <PopoverRow label={inFlight ? "Elapsed" : "Duration"}>
+          <span className="font-mono">
+            {durationMs != null ? formatDurationMs(durationMs) : "--"}
+          </span>
+        </PopoverRow>
+      </PopoverRows>
+    </>
+  );
+}
+
 function phaseRow(phase: RunPhase, nowMs: number): Row {
   const endMs = phase.endMs;
+  const inFlight = endMs == null;
   const closedEnd = endMs ?? nowMs;
-  const durationMs = closedEnd - phase.startMs;
+  const rawDuration = closedEnd - phase.startMs;
+  const durationMs = rawDuration >= 0 ? rawDuration : null;
   return {
     key: `phase:${phase.kind}`,
     kind: "phase",
     label: phase.label,
     startMs: phase.startMs,
     endMs,
-    durationMs: durationMs >= 0 ? durationMs : null,
-    barClass: endMs == null ? "bg-fg-3/40 animate-pulse" : "bg-fg-3/40",
+    durationMs,
+    barClass: inFlight ? "bg-fg-3/40 animate-pulse" : "bg-fg-3/40",
     href: null,
-    tooltip: `${phase.label} • started ${formatAbsoluteTs(new Date(phase.startMs).toISOString())}`,
+    popover: phasePopover(phase, durationMs, inFlight),
   };
+}
+
+function stagePopover(
+  stage: RunStage,
+  durationMs: number | null,
+  inFlight: boolean,
+): ReactNode {
+  return (
+    <>
+      <PopoverHeader>{formatStageLabel(stage)}</PopoverHeader>
+      <PopoverRows>
+        <PopoverRow label="Status">
+          <span
+            className={`inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium ${stageStatusTone(stage.status)}`}
+          >
+            {stageStatusLabel(stage.status)}
+          </span>
+        </PopoverRow>
+        {stage.started_at && (
+          <PopoverRow label="Started">{formatAbsoluteTs(stage.started_at)}</PopoverRow>
+        )}
+        <PopoverRow label={inFlight ? "Elapsed" : "Duration"}>
+          <span className="font-mono">
+            {durationMs != null ? formatDurationMs(durationMs) : "--"}
+          </span>
+        </PopoverRow>
+      </PopoverRows>
+    </>
+  );
 }
 
 function stageRow(runId: string, stage: RunStage, nowMs: number): Row | null {
@@ -105,7 +159,7 @@ function stageRow(runId: string, stage: RunStage, nowMs: number): Row | null {
     durationMs,
     barClass: stageBarClass(stage.status),
     href: `/runs/${runId}/stages/${encodeURIComponent(stage.id)}`,
-    tooltip: `${formatStageLabel(stage)} • ${stage.status} • started ${formatAbsoluteTs(stage.started_at)}`,
+    popover: stagePopover(stage, durationMs, inFlight),
   };
 }
 
@@ -242,11 +296,8 @@ function WaterfallRow({
     row.kind === "phase"
       ? "text-fg-muted"
       : "text-fg-2";
-  const content = (
-    <div
-      className="group flex items-center gap-3 px-3 py-1.5 hover:bg-overlay"
-      title={row.tooltip}
-    >
+  const inner = (
+    <div className="flex items-center gap-3 px-3 py-1.5 hover:bg-overlay">
       <div className={`w-48 shrink-0 truncate font-mono text-xs ${labelClass}`}>
         {row.label}
       </div>
@@ -261,15 +312,19 @@ function WaterfallRow({
       </div>
     </div>
   );
-  if (row.href) {
-    return (
-      <Link
-        to={row.href}
-        className="block focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-teal-500"
-      >
-        {content}
-      </Link>
-    );
-  }
-  return content;
+  const trigger = row.href ? (
+    <Link
+      to={row.href}
+      className="block focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-teal-500"
+    >
+      {inner}
+    </Link>
+  ) : (
+    inner
+  );
+  return (
+    <HoverCard content={row.popover} className="block">
+      {trigger}
+    </HoverCard>
+  );
 }

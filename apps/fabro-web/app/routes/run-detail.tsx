@@ -38,7 +38,15 @@ import { InterviewDock } from "../components/interview-dock";
 import { SteerBar, type SteerBarHandle } from "../components/steer-bar";
 import { ErrorState } from "../components/state";
 import { useToast } from "../components/toast";
-import { ConfirmDialog, HoverCard, SECONDARY_BUTTON_CLASS, Tooltip } from "../components/ui";
+import {
+  ConfirmDialog,
+  HoverCard,
+  PopoverHeader,
+  PopoverRow,
+  PopoverRows,
+  SECONDARY_BUTTON_CLASS,
+  Tooltip,
+} from "../components/ui";
 import {
   isRunStatus,
   mapRunToRunItem,
@@ -192,27 +200,6 @@ export function meta({ data }: any) {
 }
 
 // ---- Header hover-card popovers ----
-
-function PopoverHeader({ children }: { children: ReactNode }) {
-  return (
-    <div className="mb-1.5 border-b border-line pb-1 font-medium text-fg-2">
-      {children}
-    </div>
-  );
-}
-
-function PopoverRows({ children }: { children: ReactNode }) {
-  return <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">{children}</dl>;
-}
-
-function PopoverRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <>
-      <dt className="text-fg-3">{label}</dt>
-      <dd className="min-w-0 text-fg">{children}</dd>
-    </>
-  );
-}
 
 function humanizeFailureReason(reason: string): string {
   const spaced = reason.replace(/_/g, " ");
