@@ -6,7 +6,6 @@ export * from './agent-skill-summary';
 export * from './aggregate-billing';
 export * from './aggregate-billing-totals';
 export * from './api-question';
-export * from './api-question-option';
 export * from './append-event-response';
 export * from './approval-mode';
 export * from './artifact-batch-upload-entry';

@@ -28,7 +28,6 @@ models/agent-skill-activation-source.ts
 models/agent-skill-summary.ts
 models/aggregate-billing-totals.ts
 models/aggregate-billing.ts
-models/api-question-option.ts
 models/api-question.ts
 models/append-event-response.ts
 models/approval-mode.ts

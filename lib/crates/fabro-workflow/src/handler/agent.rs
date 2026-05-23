@@ -12,6 +12,7 @@ use super::{EngineServices, Handler, NodeTimeoutPolicy};
 use crate::context::{Context, WorkflowContext, keys};
 use crate::error::Error;
 use crate::event::{Emitter, Event, StageScope};
+use crate::interview_runtime::WorkflowAgentQuestionRuntime;
 use crate::outcome::{
     BilledModelUsage, FailureCategory, FailureDetail, Outcome, OutcomeExt, StageOutcome,
 };
@@ -28,14 +29,15 @@ pub enum CodergenResult {
 }
 
 pub struct CodergenRunRequest<'a> {
-    pub node:         &'a Node,
-    pub prompt:       &'a str,
-    pub context:      &'a Context,
-    pub thread_id:    Option<&'a str>,
-    pub emitter:      &'a Arc<Emitter>,
-    pub sandbox:      &'a Arc<dyn Sandbox>,
-    pub tool_hooks:   Option<Arc<dyn fabro_agent::ToolHookCallback>>,
-    pub cancel_token: CancellationToken,
+    pub node:               &'a Node,
+    pub prompt:             &'a str,
+    pub context:            &'a Context,
+    pub thread_id:          Option<&'a str>,
+    pub emitter:            &'a Arc<Emitter>,
+    pub sandbox:            &'a Arc<dyn Sandbox>,
+    pub tool_hooks:         Option<Arc<dyn fabro_agent::ToolHookCallback>>,
+    pub cancel_token:       CancellationToken,
+    pub agent_tool_runtime: fabro_agent::AgentToolRuntime,
 }
 
 pub struct OneShotRequest<'a> {
@@ -311,6 +313,15 @@ impl Handler for AgentHandler {
             StageModelUsage::MODE_AGENT,
             self.backend.as_deref(),
         )?;
+        let agent_tool_runtime = fabro_agent::AgentToolRuntime::with_question_runtime(Arc::new(
+            WorkflowAgentQuestionRuntime::new(
+                Arc::clone(&services.interviewer),
+                Arc::clone(&services.run.emitter),
+                stage_scope.clone(),
+                node.id.clone(),
+                Arc::clone(&services.run.interview_blocker),
+            ),
+        ));
 
         // 3. Call LLM backend (agent loop)
         let thread_id = context.thread_id();
@@ -341,6 +352,7 @@ impl Handler for AgentHandler {
                         sandbox: &services.run.sandbox,
                         tool_hooks,
                         cancel_token: services.run.cancel_token(),
+                        agent_tool_runtime: agent_tool_runtime.clone(),
                     })
                     .await;
                 match result {
