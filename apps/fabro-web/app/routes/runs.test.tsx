@@ -9,6 +9,7 @@ import {
   RUNS_PREFERENCES_STORAGE_KEY,
   runsQuickStartCommands,
   shouldRefreshBoardForEvent,
+  summarizeBatchLifecycleAction,
 } from "./runs";
 
 function boardRun(id: string, column: BoardColumn, questionText?: string): Run {
@@ -172,6 +173,30 @@ describe("runs route board mapping", () => {
       "fabro repo init",
       "fabro run hello",
     ]);
+  });
+
+  test("summarizes successful batch archive and unarchive actions", () => {
+    expect(
+      summarizeBatchLifecycleAction("Archive", { requested: 2, succeeded: 2, failed: 0 }),
+    ).toEqual({ message: "Archived 2 runs." });
+    expect(
+      summarizeBatchLifecycleAction("Unarchive", { requested: 1, succeeded: 1, failed: 0 }),
+    ).toEqual({ message: "Unarchived 1 run." });
+  });
+
+  test("summarizes partial and failed batch lifecycle actions", () => {
+    expect(
+      summarizeBatchLifecycleAction("Archive", { requested: 3, succeeded: 2, failed: 1 }),
+    ).toEqual({
+      message: "Archived 2 of 3 runs. 1 failed.",
+      tone:    "error",
+    });
+    expect(
+      summarizeBatchLifecycleAction("Unarchive", { requested: 2, succeeded: 0, failed: 2 }),
+    ).toEqual({
+      message: "Couldn't unarchive 2 runs. Try again.",
+      tone:    "error",
+    });
   });
 });
 

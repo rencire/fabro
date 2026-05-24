@@ -1,13 +1,16 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use chrono::Utc;
 
 use super::super::{
-    ApiError, AppState, DenyRunRequest, FailureReason, ForkRequest, ForkResponse, HeaderMap,
-    IntoResponse, Json, Path, PendingReason, Principal, RequireRunScopedOrRunTools, RequiredUser,
-    Response, RewindRequest, RewindResponse, Router, RunAnswerTransport, RunControlAction,
-    RunExecutionMode, RunId, RunRunnableSource, RunStatus, StartRunRequest, State, StatusCode,
-    Storage, TimelineEntryResponse, WORKER_CANCEL_GRACE, WorkflowError, append_control_request,
+    ApiError, AppState, AskFabroReadiness, BatchRunLifecycleRequest, BatchRunLifecycleResponse,
+    BatchRunLifecycleResult, BatchRunLifecycleResultOutcome, BatchRunLifecycleSummary,
+    DenyRunRequest, FailureReason, ForkRequest, ForkResponse, HeaderMap, IntoResponse, Json, Path,
+    PendingReason, Principal, RequireRunScopedOrRunTools, RequiredUser, Response, RewindRequest,
+    RewindResponse, Router, RunAnswerTransport, RunControlAction, RunExecutionMode, RunId,
+    RunRunnableSource, RunStatus, StartRunRequest, State, StatusCode, Storage,
+    TimelineEntryResponse, WORKER_CANCEL_GRACE, WorkflowError, append_control_request,
     clear_live_run_state, durable_run_status, get, load_pending_control, managed_run, operations,
     parse_run_id_path, persist_cancelled_run_status, post, reject_if_archived, sleep,
     update_live_run_from_event, workflow_event,
@@ -22,6 +25,8 @@ pub(super) fn routes() -> Router<Arc<AppState>> {
         .route("/runs/{id}/deny", post(deny_run))
         .route("/runs/{id}/pause", post(pause_run))
         .route("/runs/{id}/unpause", post(unpause_run))
+        .route("/runs/archive", post(batch_archive_runs))
+        .route("/runs/unarchive", post(batch_unarchive_runs))
         .route("/runs/{id}/archive", post(archive_run))
         .route("/runs/{id}/rewind", post(rewind_run))
         .route("/runs/{id}/retry", post(retry_run))
@@ -684,6 +689,34 @@ async fn unarchive_run(
     run_archive_action(state, actor, id, ArchiveAction::Unarchive).await
 }
 
+async fn batch_archive_runs(
+    RequiredUser(user): RequiredUser,
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<BatchRunLifecycleRequest>,
+) -> Response {
+    batch_run_archive_action(
+        state,
+        Principal::User(user),
+        request,
+        ArchiveAction::Archive,
+    )
+    .await
+}
+
+async fn batch_unarchive_runs(
+    RequiredUser(user): RequiredUser,
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<BatchRunLifecycleRequest>,
+) -> Response {
+    batch_run_archive_action(
+        state,
+        Principal::User(user),
+        request,
+        ArchiveAction::Unarchive,
+    )
+    .await
+}
+
 async fn rewind_run(
     subject: RequiredUser,
     State(state): State<Arc<AppState>>,
@@ -876,30 +909,183 @@ enum ArchiveAction {
     Unarchive,
 }
 
+const MAX_BATCH_RUN_LIFECYCLE_IDS: usize = 250;
+
+async fn batch_run_archive_action(
+    state: Arc<AppState>,
+    actor: Principal,
+    request: BatchRunLifecycleRequest,
+    action: ArchiveAction,
+) -> Response {
+    let ids = match validate_batch_run_ids(request) {
+        Ok(ids) => ids,
+        Err(err) => return err.into_response(),
+    };
+
+    // Resolve Ask Fabro readiness once per batch instead of inside each
+    // per-item summary lookup; readiness is identical for every run in the
+    // request and resolving it performs LLM credential work.
+    let readiness = state.ask_fabro_readiness().await;
+    let mut results = Vec::with_capacity(ids.len());
+    for id in ids {
+        results.push(
+            batch_run_archive_item(state.as_ref(), &readiness, actor.clone(), id, action).await,
+        );
+    }
+
+    let requested = results.len() as u64;
+    let succeeded = results.iter().filter(|result| result.ok).count() as u64;
+    (
+        StatusCode::OK,
+        Json(BatchRunLifecycleResponse {
+            results,
+            summary: BatchRunLifecycleSummary {
+                requested,
+                succeeded,
+                failed: requested - succeeded,
+            },
+        }),
+    )
+        .into_response()
+}
+
+fn validate_batch_run_ids(request: BatchRunLifecycleRequest) -> Result<Vec<RunId>, ApiError> {
+    if request.run_ids.is_empty() {
+        return Err(ApiError::bad_request(
+            "run_ids must contain at least one run ID.",
+        ));
+    }
+    if request.run_ids.len() > MAX_BATCH_RUN_LIFECYCLE_IDS {
+        return Err(ApiError::bad_request(format!(
+            "run_ids must contain no more than {MAX_BATCH_RUN_LIFECYCLE_IDS} run IDs.",
+        )));
+    }
+
+    let mut seen = HashSet::with_capacity(request.run_ids.len());
+    let mut ids = Vec::with_capacity(request.run_ids.len());
+    for raw in request.run_ids {
+        let id = raw.parse::<RunId>().map_err(|_| {
+            ApiError::bad_request(format!("run_ids contains invalid run ID: {raw}"))
+        })?;
+        if !seen.insert(id) {
+            return Err(ApiError::bad_request(
+                "run_ids must not contain duplicate IDs.",
+            ));
+        }
+        ids.push(id);
+    }
+    Ok(ids)
+}
+
+async fn batch_run_archive_item(
+    state: &AppState,
+    readiness: &AskFabroReadiness,
+    actor: Principal,
+    id: RunId,
+    action: ArchiveAction,
+) -> BatchRunLifecycleResult {
+    let outcome = match run_archive_operation(state, &id, Some(actor), action).await {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            let api_error = archive_workflow_error_to_api_error(err);
+            let result_outcome = match api_error.status() {
+                StatusCode::NOT_FOUND => BatchRunLifecycleResultOutcome::NotFound,
+                StatusCode::CONFLICT => BatchRunLifecycleResultOutcome::Conflict,
+                _ => BatchRunLifecycleResultOutcome::Error,
+            };
+            return batch_result_failure(id, result_outcome, api_error);
+        }
+    };
+
+    match state.store.get_cached_summary(&id, Utc::now()).await {
+        Ok(Some(summary)) => BatchRunLifecycleResult {
+            run_id: id.to_string(),
+            ok: true,
+            outcome,
+            run: Some(readiness.decorate(summary)),
+            error: None,
+        },
+        Ok(None) => batch_result_failure(
+            id,
+            BatchRunLifecycleResultOutcome::Error,
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to load run summary after lifecycle action.",
+            ),
+        ),
+        Err(err) => batch_result_failure(
+            id,
+            BatchRunLifecycleResultOutcome::Error,
+            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        ),
+    }
+}
+
+fn batch_result_failure(
+    id: RunId,
+    outcome: BatchRunLifecycleResultOutcome,
+    error: ApiError,
+) -> BatchRunLifecycleResult {
+    BatchRunLifecycleResult {
+        run_id: id.to_string(),
+        ok: false,
+        outcome,
+        run: None,
+        error: Some(error.into_response_entry()),
+    }
+}
+
+async fn run_archive_operation(
+    state: &AppState,
+    id: &RunId,
+    actor: Option<Principal>,
+    action: ArchiveAction,
+) -> Result<BatchRunLifecycleResultOutcome, WorkflowError> {
+    match action {
+        ArchiveAction::Archive => {
+            operations::archive(&state.store, id, actor)
+                .await
+                .map(|outcome| match outcome {
+                    operations::ArchiveOutcome::Archived { .. } => {
+                        BatchRunLifecycleResultOutcome::Archived
+                    }
+                    operations::ArchiveOutcome::AlreadyArchived => {
+                        BatchRunLifecycleResultOutcome::AlreadyArchived
+                    }
+                })
+        }
+        ArchiveAction::Unarchive => {
+            operations::unarchive(&state.store, id, actor)
+                .await
+                .map(|outcome| match outcome {
+                    operations::UnarchiveOutcome::Unarchived { .. } => {
+                        BatchRunLifecycleResultOutcome::Unarchived
+                    }
+                    operations::UnarchiveOutcome::NotArchived { .. } => {
+                        BatchRunLifecycleResultOutcome::NotArchived
+                    }
+                })
+        }
+    }
+}
+
+fn archive_workflow_error_to_api_error(err: WorkflowError) -> ApiError {
+    match err {
+        WorkflowError::Precondition(message) => ApiError::new(StatusCode::CONFLICT, message),
+        WorkflowError::RunNotFound(_) => ApiError::not_found("Run not found."),
+        err => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
 async fn run_archive_action(
     state: Arc<AppState>,
     actor: Principal,
     id: RunId,
     action: ArchiveAction,
 ) -> Response {
-    let actor = Some(actor);
-    let result = match action {
-        ArchiveAction::Archive => operations::archive(&state.store, &id, actor)
-            .await
-            .map(|_| ()),
-        ArchiveAction::Unarchive => operations::unarchive(&state.store, &id, actor)
-            .await
-            .map(|_| ()),
-    };
-    match result {
-        Ok(()) => archive_status_response(state.as_ref(), id).await,
-        Err(WorkflowError::Precondition(message)) => {
-            ApiError::new(StatusCode::CONFLICT, message).into_response()
-        }
-        Err(WorkflowError::RunNotFound(_)) => ApiError::not_found("Run not found.").into_response(),
-        Err(err) => {
-            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
-        }
+    match run_archive_operation(state.as_ref(), &id, Some(actor), action).await {
+        Ok(_) => archive_status_response(state.as_ref(), id).await,
+        Err(err) => archive_workflow_error_to_api_error(err).into_response(),
     }
 }
 

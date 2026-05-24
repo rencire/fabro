@@ -23,23 +23,25 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use bytes::Bytes;
 pub use fabro_api::types::{
     AggregateBilling, AggregateBillingTotals, ApiQuestion, AppendEventResponse, ArtifactEntry,
-    ArtifactListResponse, BillingByModel, BillingStageRef, CloseRunPullRequestResponse,
-    CompletionContentPart, CompletionMessage, CompletionMessageRole, CompletionResponse,
-    CompletionToolChoiceMode, CompletionUsage, CreateCompletionRequest,
-    CreateRunPullRequestRequest, CreateSecretRequest, DeleteRunResponse, DeleteRunSandbox,
-    DeleteSecretRequest, DenyRunRequest, DiskUsageResponse, DiskUsageRunRow, DiskUsageSummaryRow,
-    ForkRequest, ForkResponse, LinkRunPullRequestRequest, MergeRunPullRequestRequest,
-    MergeRunPullRequestResponse, ModelReference, PaginatedEventList, PaginatedRunList,
-    PaginationMeta, PreflightResponse, PreviewUrlRequest, PreviewUrlResponse, Provider,
-    ProviderList, PruneRunEntry, PruneRunsRequest, PruneRunsResponse, RenderWorkflowGraphDirection,
-    RenderWorkflowGraphRequest, RewindRequest, RewindResponse, RunArtifactEntry,
-    RunArtifactListResponse, RunBilling, RunBillingStage, RunBillingTotals, RunError, RunManifest,
-    RunStage, SandboxDetails, SandboxFileEntry, SandboxFileListResponse, SandboxService,
-    SandboxServiceListResponse, SshAccessRequest, SshAccessResponse, StageHandler, StageState,
-    StartRunRequest, SubmitAnswerRequest, SystemCpuResourceScope, SystemCpuResources,
-    SystemDiskResourceScope, SystemDiskResources, SystemInfoResponse, SystemMemoryResourceScope,
-    SystemMemoryResources, SystemRepairRunIssue, SystemRepairRunsResponse, SystemResourcesResponse,
-    SystemRunCounts, TimelineEntryResponse, VncPreviewResponse, WriteBlobResponse,
+    ArtifactListResponse, BatchRunLifecycleRequest, BatchRunLifecycleResponse,
+    BatchRunLifecycleResult, BatchRunLifecycleResultOutcome, BatchRunLifecycleSummary,
+    BillingByModel, BillingStageRef, CloseRunPullRequestResponse, CompletionContentPart,
+    CompletionMessage, CompletionMessageRole, CompletionResponse, CompletionToolChoiceMode,
+    CompletionUsage, CreateCompletionRequest, CreateRunPullRequestRequest, CreateSecretRequest,
+    DeleteRunResponse, DeleteRunSandbox, DeleteSecretRequest, DenyRunRequest, DiskUsageResponse,
+    DiskUsageRunRow, DiskUsageSummaryRow, ErrorResponseEntry, ForkRequest, ForkResponse,
+    LinkRunPullRequestRequest, MergeRunPullRequestRequest, MergeRunPullRequestResponse,
+    ModelReference, PaginatedEventList, PaginatedRunList, PaginationMeta, PreflightResponse,
+    PreviewUrlRequest, PreviewUrlResponse, Provider, ProviderList, PruneRunEntry, PruneRunsRequest,
+    PruneRunsResponse, RenderWorkflowGraphDirection, RenderWorkflowGraphRequest, RewindRequest,
+    RewindResponse, Run, RunArtifactEntry, RunArtifactListResponse, RunBilling, RunBillingStage,
+    RunBillingTotals, RunError, RunManifest, RunStage, SandboxDetails, SandboxFileEntry,
+    SandboxFileListResponse, SandboxService, SandboxServiceListResponse, SshAccessRequest,
+    SshAccessResponse, StageHandler, StageState, StartRunRequest, SubmitAnswerRequest,
+    SystemCpuResourceScope, SystemCpuResources, SystemDiskResourceScope, SystemDiskResources,
+    SystemInfoResponse, SystemMemoryResourceScope, SystemMemoryResources, SystemRepairRunIssue,
+    SystemRepairRunsResponse, SystemResourcesResponse, SystemRunCounts, TimelineEntryResponse,
+    VncPreviewResponse, WriteBlobResponse,
 };
 use fabro_auth::{CredentialSource, VaultCredentialSource, auth_issue_message};
 #[cfg(test)]
@@ -963,12 +965,12 @@ pub struct AppState {
 
 type PullRequestCreateLocks = Arc<Mutex<HashMap<RunId, Arc<AsyncMutex<()>>>>>;
 
-struct AskFabroReadiness {
+pub(crate) struct AskFabroReadiness {
     default_model: Option<String>,
 }
 
 impl AskFabroReadiness {
-    fn decorate(&self, mut run: fabro_types::Run) -> fabro_types::Run {
+    pub(crate) fn decorate(&self, mut run: fabro_types::Run) -> fabro_types::Run {
         run.ask_fabro = self.ask_fabro_for(&run);
         run
     }
@@ -1202,7 +1204,7 @@ impl AppState {
             .collect()
     }
 
-    async fn ask_fabro_readiness(&self) -> AskFabroReadiness {
+    pub(crate) async fn ask_fabro_readiness(&self) -> AskFabroReadiness {
         let provider_ids = self.ready_llm_provider_ids().await;
         let default_model = if provider_ids.is_empty() {
             None
