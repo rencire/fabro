@@ -21,7 +21,7 @@ use fabro_mcp::config::McpServerSettings;
 use fabro_model::catalog::LlmCatalogSettings;
 use fabro_model::{AgentProfileKind, Catalog, FallbackTarget, ModelRef, ProviderId};
 use fabro_types::settings::run::RunModelControls;
-use fabro_types::{RunId, SessionCapability, StageId};
+use fabro_types::{PermissionLevel, RunId, SessionCapability, StageId};
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::task::JoinHandle;
@@ -732,6 +732,12 @@ impl AgentApiBackend {
             speed: controls.speed,
             tool_hooks,
             mcp_servers,
+            // Workflow agents run with no `tool_access_policy`, which exposes
+            // the entire tool registry (read, write, shell, subagent, MCP) and
+            // skips approval gating. Report that truthfully so the UI doesn't
+            // render "Unknown" for every workflow stage. Override per-stage if
+            // a future workflow attribute narrows the scope.
+            permission_level: Some(PermissionLevel::Full),
             ..SessionOptions::default()
         };
 

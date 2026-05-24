@@ -25,6 +25,7 @@ import type {
   ThreadDnaSelection,
 } from "../components/event-debug";
 import { StageContext } from "../components/stage-context";
+import { StageInsightsSidebar } from "../components/stage-insights-sidebar";
 import { StageSidebar } from "../components/stage-sidebar";
 import type { Stage } from "../components/stage-sidebar";
 import { EmptyState } from "../components/state";
@@ -54,9 +55,11 @@ import {
 import {
   useRun,
   useRunEventsList,
+  useRunStageContextWindow,
   useRunStageEvents,
   useRunStageLog,
   useRunStages,
+  useRunState,
 } from "../lib/queries";
 import { STAGE_ACTIVITY_EVENT_TYPES, type StageActivityEventType } from "../lib/run-events";
 import { mapRunStagesToSidebarStages } from "../lib/stage-sidebar";
@@ -1352,6 +1355,18 @@ export default function RunStages() {
     runQuery.data?.timestamps.started_at ??
     runQuery.data?.timestamps.created_at;
   const stageEventsQuery = useRunStageEvents(id, selectedStageId);
+  // Insights sidebar only renders for agent stages; fetch projection + context
+  // window only when the user is on one to keep the hot path lean.
+  const isAgentStage = selectedStage?.handler === "agent";
+  const runStateQuery = useRunState(isAgentStage ? id : undefined);
+  const contextWindowQuery = useRunStageContextWindow(
+    isAgentStage ? id : undefined,
+    isAgentStage ? selectedStageId : undefined,
+  );
+  const stageProjection =
+    isAgentStage && selectedStageId
+      ? runStateQuery.data?.stages[selectedStageId]
+      : undefined;
   const turns = useMemo(
     () =>
       selectedStageId
@@ -1492,6 +1507,23 @@ export default function RunStages() {
           className="absolute inset-x-0 top-0 -bottom-6 bg-line"
         />
       </div>
+
+      {isAgentStage && (
+        <>
+          <div className="shrink-0 px-3 pb-6 pt-3">
+            <StageInsightsSidebar
+              stage={stageProjection}
+              contextWindow={contextWindowQuery.data}
+            />
+          </div>
+          <div className="relative w-px shrink-0">
+            <div
+              aria-hidden="true"
+              className="absolute inset-x-0 top-0 -bottom-6 bg-line"
+            />
+          </div>
+        </>
+      )}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col pt-3">
         <div className="shrink-0 border-b border-line">
