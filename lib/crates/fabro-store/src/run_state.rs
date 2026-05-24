@@ -9,14 +9,14 @@ use fabro_types::run_event::{
 use fabro_types::settings::run::{EnvironmentProvider, RunEnvironmentSettings};
 use fabro_types::{
     ActivatedSkill, AskFabro, BilledModelUsage, Checkpoint, CheckpointRecord, CommandTermination,
-    Conclusion, EventBody, FailureSignature, InterviewQuestionRecord, McpServerProjection,
-    McpServerStatus, Outcome, PendingInterviewRecord, PendingReason, PullRequestLink,
-    RepositoryRef, Run, RunApproval, RunApprovalState, RunBillingSummary, RunControlAction,
-    RunDiff, RunEvent, RunId, RunLifecycle, RunLinks, RunModel, RunOrigin, RunProjection,
-    RunSandbox, RunSandboxRuntime, RunSize, RunSpec, RunStatus, RunTimestamps, SandboxProvider,
-    StageCompletion, StageHandler, StageId, StageModelUsage, StageOutcome, StageProjection,
-    StageState, StartRecord, SubAgentProjection, SubAgentStatus, TodoListProjection,
-    TodoProjection, WorkflowRef, first_event_seq,
+    Conclusion, EventBody, FailureCategory, FailureSignature, InterviewQuestionRecord,
+    McpServerProjection, McpServerStatus, Outcome, PendingInterviewRecord, PendingReason,
+    PullRequestLink, RepositoryRef, Run, RunApproval, RunApprovalState, RunBillingSummary,
+    RunControlAction, RunDiff, RunEvent, RunId, RunLifecycle, RunLinks, RunModel, RunOrigin,
+    RunProjection, RunSandbox, RunSandboxRuntime, RunSize, RunSpec, RunStatus, RunTimestamps,
+    SandboxProvider, StageCompletion, StageHandler, StageId, StageModelUsage, StageOutcome,
+    StageProjection, StageState, StartRecord, SubAgentProjection, SubAgentStatus,
+    TodoListProjection, TodoProjection, WorkflowRef, first_event_seq,
 };
 use fabro_util::error::render_compact_with_causes;
 
@@ -187,6 +187,7 @@ impl RunProjectionReducer for RunProjection {
                 self.pending_control = None;
                 self.conclusion = Some(conclusion_from_failed(props, ts));
                 self.pending_interviews.clear();
+                finalize_unfinished_stages_after_run_failed(self, props, ts);
             }
             EventBody::RunSupersededBy(props) => {
                 self.superseded_by = Some(props.new_run_id);
@@ -373,6 +374,7 @@ impl RunProjectionReducer for RunProjection {
             }
             EventBody::StageFailed(props) => {
                 let failure_reason = props.failure.as_ref().map(|detail| detail.message.clone());
+                let failure_category = props.failure.as_ref().map(|detail| detail.category);
                 let Some(stage) = stage_at_stored_or_current_visit(self, stored, event.seq) else {
                     return Ok(());
                 };
@@ -390,7 +392,7 @@ impl RunProjectionReducer for RunProjection {
                     stage.usage.replace_with_billed_usage(billing);
                     stage.model = Some(billing.model().clone());
                 }
-                stage.state = StageState::from(outcome);
+                stage.state = stage_state_from_failure(props.will_retry, failure_category);
             }
             EventBody::AgentMessage(props) => {
                 let Some(stage) = stage_at_stored_or_visit(self, stored, props.visit, event.seq)
@@ -1072,6 +1074,51 @@ fn conclusion_from_failed(props: &RunFailedProps, timestamp: DateTime<Utc>) -> C
     }
 }
 
+fn finalize_unfinished_stages_after_run_failed(
+    state: &mut RunProjection,
+    props: &RunFailedProps,
+    timestamp: DateTime<Utc>,
+) {
+    let terminal_state = if props.failure.reason == fabro_types::FailureReason::Cancelled {
+        StageState::Cancelled
+    } else {
+        StageState::Failed
+    };
+
+    for (_, stage) in state.iter_stages_mut() {
+        if stage.state.is_terminal() {
+            continue;
+        }
+
+        stage.state = terminal_state;
+        if stage.timing.is_none() {
+            if let Some(started_at) = stage.started_at {
+                let wall_time_ms = u64::try_from(
+                    timestamp
+                        .signed_duration_since(started_at)
+                        .num_milliseconds()
+                        .max(0),
+                )
+                .expect("non-negative milliseconds fit in u64");
+                stage.timing = Some(fabro_types::StageTiming::wall_only(wall_time_ms));
+            }
+        }
+    }
+}
+
+fn stage_state_from_failure(
+    will_retry: bool,
+    failure_category: Option<FailureCategory>,
+) -> StageState {
+    if will_retry {
+        StageState::Retrying
+    } else if failure_category == Some(FailureCategory::Canceled) {
+        StageState::Cancelled
+    } else {
+        StageState::Failed
+    }
+}
+
 fn stage_visit(
     node_id: &str,
     node_visits: Option<&BTreeMap<String, usize>>,
@@ -1200,6 +1247,17 @@ mod tests {
     fn test_stage_event(seq: u32, body: EventBody, stage_id: StageId) -> EventEnvelope {
         let mut event = test_event(seq, body, Some(stage_id.node_id()));
         event.event.stage_id = Some(stage_id);
+        event
+    }
+
+    fn test_stage_event_at(
+        seq: u32,
+        ts: &str,
+        body: EventBody,
+        stage_id: StageId,
+    ) -> EventEnvelope {
+        let mut event = test_stage_event(seq, body, stage_id);
+        event.event.ts = test_dt(ts);
         event
     }
 
@@ -3283,6 +3341,36 @@ mod tests {
         }
     }
 
+    fn canceled_failed_props(duration_ms: u64, will_retry: bool) -> StageFailedProps {
+        StageFailedProps {
+            index: 0,
+            failure: Some(FailureDetail::new("cancelled", FailureCategory::Canceled)),
+            will_retry,
+            timing: fabro_types::StageTiming::wall_only(duration_ms),
+            billing: None,
+        }
+    }
+
+    fn run_failed_props(reason: FailureReason) -> RunFailedProps {
+        let category = if reason == FailureReason::Cancelled {
+            FailureCategory::Canceled
+        } else {
+            FailureCategory::Deterministic
+        };
+
+        RunFailedProps {
+            failure:              fabro_types::RunFailure {
+                reason,
+                detail: FailureDetail::new("run failed", category),
+            },
+            timing:               fabro_types::RunTiming::wall_only(42),
+            final_git_commit_sha: None,
+            final_patch:          None,
+            diff_summary:         None,
+            billing:              None,
+        }
+    }
+
     fn retrying_props() -> StageRetryingProps {
         StageRetryingProps {
             index:        0,
@@ -3631,6 +3719,128 @@ mod tests {
         let stage = state.stage(&stage_id).unwrap();
         assert_eq!(stage.timing.map(|t| t.wall_time_ms), Some(10));
         assert_eq!(stage.state, StageState::Failed);
+    }
+
+    #[test]
+    fn stage_failed_canceled_without_retry_records_cancelled_state() {
+        let mut state = initialized_projection();
+        let stage_id = StageId::new("build", 1);
+
+        state
+            .apply_event(&test_stage_event(
+                1,
+                EventBody::StageStarted(started_props()),
+                stage_id.clone(),
+            ))
+            .unwrap();
+        state
+            .apply_event(&test_event(
+                2,
+                EventBody::StageFailed(canceled_failed_props(10, false)),
+                Some("build"),
+            ))
+            .unwrap();
+
+        let stage = state.stage(&stage_id).unwrap();
+        assert_eq!(stage.timing.map(|t| t.wall_time_ms), Some(10));
+        assert_eq!(stage.state, StageState::Cancelled);
+    }
+
+    #[test]
+    fn run_failed_cancelled_finalizes_running_stage_as_cancelled() {
+        let mut state = running_projection();
+        let stage_id = StageId::new("build", 1);
+
+        state
+            .apply_event(&test_stage_event_at(
+                4,
+                "2026-04-07T12:00:00Z",
+                EventBody::StageStarted(started_props()),
+                stage_id.clone(),
+            ))
+            .unwrap();
+        state
+            .apply_event(&test_raw_event_at(
+                5,
+                "2026-04-07T12:00:05Z",
+                "run.failed",
+                &serde_json::to_value(run_failed_props(FailureReason::Cancelled)).unwrap(),
+                None,
+            ))
+            .unwrap();
+
+        let stage = state.stage(&stage_id).unwrap();
+        assert_eq!(stage.state, StageState::Cancelled);
+        assert_eq!(
+            stage.timing,
+            Some(fabro_types::StageTiming::wall_only(5_000))
+        );
+    }
+
+    #[test]
+    fn run_failed_non_cancelled_finalizes_running_stage_as_failed() {
+        let mut state = running_projection();
+        let stage_id = StageId::new("build", 1);
+
+        state
+            .apply_event(&test_stage_event_at(
+                4,
+                "2026-04-07T12:00:00Z",
+                EventBody::StageStarted(started_props()),
+                stage_id.clone(),
+            ))
+            .unwrap();
+        state
+            .apply_event(&test_raw_event_at(
+                5,
+                "2026-04-07T12:00:05Z",
+                "run.failed",
+                &serde_json::to_value(run_failed_props(FailureReason::WorkflowError)).unwrap(),
+                None,
+            ))
+            .unwrap();
+
+        let stage = state.stage(&stage_id).unwrap();
+        assert_eq!(stage.state, StageState::Failed);
+        assert_eq!(
+            stage.timing,
+            Some(fabro_types::StageTiming::wall_only(5_000))
+        );
+    }
+
+    #[test]
+    fn run_failed_preserves_already_terminal_stage_projection() {
+        let mut state = running_projection();
+        let stage_id = StageId::new("build", 1);
+
+        state
+            .apply_event(&test_stage_event_at(
+                4,
+                "2026-04-07T12:00:00Z",
+                EventBody::StageStarted(started_props()),
+                stage_id.clone(),
+            ))
+            .unwrap();
+        state
+            .apply_event(&test_stage_event(
+                5,
+                EventBody::StageCompleted(completed_props(42, StageOutcome::Succeeded)),
+                stage_id.clone(),
+            ))
+            .unwrap();
+        state
+            .apply_event(&test_raw_event_at(
+                6,
+                "2026-04-07T12:00:05Z",
+                "run.failed",
+                &serde_json::to_value(run_failed_props(FailureReason::Cancelled)).unwrap(),
+                None,
+            ))
+            .unwrap();
+
+        let stage = state.stage(&stage_id).unwrap();
+        assert_eq!(stage.state, StageState::Succeeded);
+        assert_eq!(stage.timing, Some(fabro_types::StageTiming::wall_only(42)));
     }
 
     #[test]

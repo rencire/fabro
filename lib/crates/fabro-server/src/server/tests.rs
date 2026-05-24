@@ -3931,6 +3931,68 @@ async fn list_run_stages_projects_retrying_until_completion() {
     assert_eq!(stage_status(&body, "work@1"), "partially_succeeded");
 }
 
+#[tokio::test]
+async fn list_run_stages_projects_running_stage_as_cancelled_after_cancelled_run_failure() {
+    let state = test_app_state_with_isolated_storage();
+    let app = crate::test_support::build_test_router(Arc::clone(&state));
+    let run_id = RunId::new();
+
+    create_durable_run_with_events(&state, run_id, &[
+        workflow_event::Event::RunSubmitted {
+            definition_blob: None,
+        },
+        workflow_event::Event::RunStarting,
+        workflow_event::Event::RunRunning,
+    ])
+    .await;
+    append_scoped_stage_event(
+        &state,
+        run_id,
+        "work",
+        1,
+        &workflow_event::Event::StageStarted {
+            node_id:      "work".to_string(),
+            name:         "Work".to_string(),
+            index:        1,
+            handler_type: "agent".to_string(),
+            attempt:      1,
+            max_attempts: 1,
+        },
+    )
+    .await;
+    let run_store = state.store.open_run(&run_id).await.unwrap();
+    workflow_event::append_event(
+        &run_store,
+        &run_id,
+        &workflow_event::Event::WorkflowRunFailed {
+            failure:              fabro_types::RunFailure {
+                reason: fabro_types::FailureReason::Cancelled,
+                detail: FailureDetail::new("cancelled", FailureCategory::Canceled),
+            },
+            timing:               fabro_types::RunTiming::wall_only(100),
+            final_git_commit_sha: None,
+            final_patch:          None,
+            diff_summary:         None,
+            billing:              None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(api(&format!("/runs/{run_id}/stages")))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = response_json!(response, StatusCode::OK).await;
+    assert_eq!(stage_status(&body, "work@1"), "cancelled");
+}
+
 fn stage_entry<'a>(body: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
     body["data"]
         .as_array()
