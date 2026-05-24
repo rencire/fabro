@@ -482,6 +482,20 @@ pub struct CatalogProvider {
     pub aliases:        Vec<String>,
 }
 
+impl CatalogProvider {
+    #[must_use]
+    pub fn vault_secret_name(&self) -> Option<&str> {
+        self.auth
+            .as_ref()?
+            .credentials
+            .iter()
+            .find_map(|credential_ref| match credential_ref {
+                CredentialRef::Vault(name) => Some(name.as_str()),
+                CredentialRef::Env(_) => None,
+            })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogModelControls {
     pub reasoning_effort: Vec<ReasoningEffort>,
@@ -841,15 +855,7 @@ impl Catalog {
 
     #[must_use]
     pub fn provider_vault_secret_name(&self, id: &ProviderId) -> Option<&str> {
-        self.provider(id)?
-            .auth
-            .as_ref()?
-            .credentials
-            .iter()
-            .find_map(|credential_ref| match credential_ref {
-                CredentialRef::Vault(name) => Some(name.as_str()),
-                CredentialRef::Env(_) => None,
-            })
+        self.provider(id)?.vault_secret_name()
     }
 
     #[must_use]

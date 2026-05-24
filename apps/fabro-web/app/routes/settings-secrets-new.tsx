@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { useSWRConfig } from "swr";
 import { ArrowLeftIcon } from "@heroicons/react/16/solid";
 import { SecretType } from "@qltysh/fabro-api-client";
@@ -46,12 +46,13 @@ export default function SettingsSecretsNew() {
 
 function CreateSecretForm() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { mutate } = useSWRConfig();
   const toast = useToast();
   const [type, setType] = useState<typeof SecretType.TOKEN | typeof SecretType.FILE>(
     SecretType.TOKEN,
   );
-  const [name, setName] = useState("");
+  const [name, setName] = useState(() => searchParams.get("name") ?? "");
   const [value, setValue] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);

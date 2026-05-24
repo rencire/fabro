@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router";
 import { ChevronDownIcon } from "@heroicons/react/16/solid";
 import type { Provider } from "@qltysh/fabro-api-client";
 import { useProviders } from "../lib/queries";
@@ -152,6 +153,14 @@ function ProviderStatus({ provider }: { provider: Provider }) {
         >
           Get API key →
         </a>
+      ) : null}
+      {!provider.configured && provider.expected_secret_name ? (
+        <Link
+          to={`/settings/secrets/new?name=${encodeURIComponent(provider.expected_secret_name)}`}
+          className="text-xs text-teal-500 hover:underline"
+        >
+          Add secret →
+        </Link>
       ) : null}
     </span>
   );
