@@ -72,9 +72,17 @@ const pageRuns: PaginatedRunList = {
   meta: { has_more: false, total: 1 },
 };
 
+const queryCalls: Array<{ hook: string; args: unknown[] }> = [];
+
 mock.module("../lib/queries", () => ({
-  useAllRuns: () => ({ data: allRuns, isLoading: false }),
-  useRunsPage: () => ({ data: pageRuns, isLoading: false }),
+  useAllRuns: (...args: unknown[]) => {
+    queryCalls.push({ hook: "useAllRuns", args });
+    return { data: allRuns, isLoading: false };
+  },
+  useRunsPage: (...args: unknown[]) => {
+    queryCalls.push({ hook: "useRunsPage", args });
+    return { data: pageRuns, isLoading: false };
+  },
   useAuthConfig: () => ({ data: { methods: ["github"] } }),
   useSystemInfo: () => ({ data: { server_url: "http://127.0.0.1:32276" } }),
 }));
@@ -166,6 +174,7 @@ beforeEach(() => {
   storage = new MemoryStorage();
   teardownReactEnv = setupReactTestEnv();
   installWindow();
+  queryCalls.length = 0;
 });
 
 afterEach(() => {
@@ -189,6 +198,26 @@ describe("Runs workspace preference restoration", () => {
 
     expect(router.state.location.search).toBe("?view=list");
     expect(buttonByLabel(renderer, "List view").props["aria-pressed"]).toBe(true);
+  });
+
+  test("/runs applies stored list+archived prefs on the first render (no Quick Start flash)", async () => {
+    storage.setItem(
+      RUNS_PREFERENCES_STORAGE_KEY,
+      JSON.stringify({ version: 1, view: "list", archived: true }),
+    );
+
+    await renderRuns("/runs");
+
+    // The first frame the user sees must already reflect stored prefs.
+    // Before this was fixed, the route briefly rendered the columns view
+    // with includeArchived=false (default state) before a post-commit
+    // useEffect restored the URL, flashing the Quick Start empty state for
+    // users whose only runs were archived.
+    const firstAllRuns = queryCalls.find((c) => c.hook === "useAllRuns");
+    const firstRunsPage = queryCalls.find((c) => c.hook === "useRunsPage");
+    expect(firstAllRuns?.args).toEqual([{ includeArchived: true }, false]);
+    expect(firstRunsPage?.args[0]).toMatchObject({ includeArchived: true });
+    expect(firstRunsPage?.args[1]).toBe(true);
   });
 
   test("/runs?view=columns ignores stored list view", async () => {

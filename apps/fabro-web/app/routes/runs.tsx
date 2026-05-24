@@ -783,6 +783,20 @@ export function loadStoredRunsWorkspaceSearchParams(
   }
 }
 
+// Resolve which search params should drive rendering. If the URL has no
+// workspace params (e.g. the user clicked the Runs nav link, which goes to
+// `/runs`), fall back to stored preferences so the first render already
+// reflects the user's view/archived/etc. choice instead of route defaults.
+// Without this, users whose only runs are archived briefly see the empty
+// Quick Start landing before a post-commit effect restores `archived=1`.
+export function resolveRunsWorkspaceSearchParams(
+  urlSearchParams: URLSearchParams,
+): URLSearchParams {
+  if (hasRunsWorkspaceParams(urlSearchParams)) return urlSearchParams;
+  const stored = loadStoredRunsWorkspaceSearchParams();
+  return stored.toString() === "" ? urlSearchParams : stored;
+}
+
 export function persistRunsWorkspaceSearchParams(
   searchParams: URLSearchParams,
   storage: Pick<Storage, "setItem"> | null = runsPreferencesStorage(),
@@ -1719,7 +1733,11 @@ function RunsLandingEmpty({
 }
 
 export default function Runs() {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [urlSearchParams, setSearchParams] = useSearchParams();
+  const searchParams = useMemo(
+    () => resolveRunsWorkspaceSearchParams(urlSearchParams),
+    [urlSearchParams],
+  );
   const query = searchParams.get("search") ?? "";
   const repoFilter = searchParams.get("repo") ?? "all";
   const workflowFilter = searchParams.get("workflow") ?? "all";
@@ -1737,21 +1755,16 @@ export default function Runs() {
 
   const updateParam = useCallback(
     (key: string, value: string | null) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (value == null || value === "") {
-            next.delete(key);
-          } else {
-            next.set(key, value);
-          }
-          persistRunsWorkspaceSearchParams(next);
-          return next;
-        },
-        { replace: true },
-      );
+      const next = new URLSearchParams(searchParams);
+      if (value == null || value === "") {
+        next.delete(key);
+      } else {
+        next.set(key, value);
+      }
+      persistRunsWorkspaceSearchParams(next);
+      setSearchParams(next, { replace: true });
     },
-    [setSearchParams],
+    [searchParams, setSearchParams],
   );
 
   const setQuery = (value: string) => updateParam("search", value || null);
@@ -1789,13 +1802,9 @@ export default function Runs() {
   );
 
   useEffect(() => {
-    if (hasRunsWorkspaceParams(searchParams)) return;
-
-    const storedParams = loadStoredRunsWorkspaceSearchParams();
-    if (storedParams.toString() === "") return;
-
-    setSearchParams(storedParams, { replace: true });
-  }, [searchParams, setSearchParams]);
+    if (searchParams === urlSearchParams) return;
+    setSearchParams(searchParams, { replace: true });
+  }, [searchParams, urlSearchParams, setSearchParams]);
 
   const boardRuns = useAllRuns({ includeArchived }, view === "columns");
   const listRunsPage = useRunsPage(
