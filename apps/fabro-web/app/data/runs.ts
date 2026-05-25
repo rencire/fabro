@@ -107,6 +107,8 @@ export function mapRunListItem(item: Run): RunItem {
     sourceDirectory: item.source_directory ?? undefined,
     createdAt: item.timestamps.created_at,
     lastEventAt: item.timestamps.last_event_at ?? undefined,
+    additions: item.diff?.additions,
+    deletions: item.diff?.deletions,
   };
 }
 
