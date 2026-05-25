@@ -562,8 +562,11 @@ export default function RunDetail({ params }: { params: { id: string } }) {
     </span>
   );
   const totalUsdMicros = summary.billing?.total_usd_micros;
-  const sizeChip = totalUsdMicros != null && (
-    <Tooltip label={`Size ${summary.size} · ${formatUsdMicros(totalUsdMicros)} billed`}>
+  const sizeTooltip = totalUsdMicros != null
+    ? `Size ${summary.size} · ${formatUsdMicros(totalUsdMicros)} billed`
+    : `Size ${summary.size}`;
+  const sizeChip = (
+    <Tooltip label={sizeTooltip}>
       <span className="rounded bg-overlay px-1.5 py-0.5 font-mono text-xs font-bold text-fg-muted tabular-nums">
         {summary.size}
       </span>
