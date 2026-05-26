@@ -23,36 +23,13 @@ import {
   deleteRuns,
   unarchiveRuns,
 } from "../../lib/run-actions";
-import { plural } from "../settings-panel";
+import { plural } from "../../lib/plural";
 import { useToast } from "../toast";
 import { ConfirmDialog } from "../ui";
-
-export type BatchLifecycleLabel = "Archive" | "Unarchive" | "Delete" | "Approve";
-
-export interface BatchLifecycleToast {
-  message: string;
-  tone?: "error";
-}
-
-export function summarizeBatchLifecycleAction(
-  label: BatchLifecycleLabel,
-  summary: BatchRunLifecycleSummary,
-): BatchLifecycleToast {
-  const { requested, succeeded, failed } = summary;
-  if (failed === 0) {
-    return { message: `${label}d ${succeeded} ${plural(succeeded, "run", "runs")}.` };
-  }
-  if (succeeded === 0) {
-    return {
-      message: `Couldn't ${label.toLowerCase()} ${requested} ${plural(requested, "run", "runs")}. Try again.`,
-      tone:    "error",
-    };
-  }
-  return {
-    message: `${label}d ${succeeded} of ${requested} ${plural(requested, "run", "runs")}. ${failed} failed.`,
-    tone:    "error",
-  };
-}
+import {
+  summarizeBatchLifecycleAction,
+  type BatchLifecycleLabel,
+} from "./batch-lifecycle";
 
 export function BulkActionToolbar({
   selectedRuns,
@@ -141,8 +118,7 @@ export function BulkActionToolbar({
 
   return (
     <>
-      <div
-        role="region"
+      <section
         aria-label="Bulk actions"
         className="pointer-events-none fixed inset-x-0 bottom-4 z-30 flex justify-center px-4"
       >
@@ -211,7 +187,7 @@ export function BulkActionToolbar({
             <XMarkIcon className="size-4" aria-hidden="true" />
           </button>
         </div>
-      </div>
+      </section>
       <ConfirmDialog
         open={deleteDialogOpen}
         title={`Delete ${deletableCount} ${plural(deletableCount, "run", "runs")}?`}
