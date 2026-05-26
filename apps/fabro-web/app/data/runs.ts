@@ -1,6 +1,7 @@
 import { formatDurationMs } from "../lib/format";
 import {
   BoardColumn,
+  type Principal,
   type Run,
   type RunSize,
   type RunStatus as ApiRunStatus,
@@ -39,6 +40,7 @@ export interface RunItem {
   sandboxWorkingDirectory?: string;
   sourceDirectory?: string;
   createdAt?: string;
+  createdBy?: Principal | null;
   lastEventAt?: string;
   size?: RunSize;
 }
@@ -108,6 +110,7 @@ export function mapRunListItem(item: Run): RunItem {
     sandboxWorkingDirectory: runtime?.working_directory ?? undefined,
     sourceDirectory: item.source_directory ?? undefined,
     createdAt: item.timestamps.created_at,
+    createdBy: item.created_by,
     lastEventAt: item.timestamps.last_event_at ?? undefined,
     additions: item.diff?.additions,
     deletions: item.diff?.deletions,

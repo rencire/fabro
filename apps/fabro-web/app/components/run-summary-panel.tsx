@@ -1,14 +1,5 @@
 import type { ReactNode } from "react";
-import {
-  BoltIcon,
-  ChatBubbleLeftEllipsisIcon,
-  Cog6ToothIcon,
-  CpuChipIcon,
-  QuestionMarkCircleIcon,
-  ServerIcon,
-} from "@heroicons/react/20/solid";
 import type {
-  Principal,
   Run,
   SandboxResources,
   SandboxState,
@@ -20,6 +11,7 @@ import {
   formatCpuCores,
   formatUsdMicros,
 } from "../lib/format";
+import { principalDisplay } from "../lib/principal-display";
 import { useRun, useRunArtifacts, useRunSandboxDetails } from "../lib/queries";
 import { SANDBOX_STATE_DISPLAY } from "../lib/sandbox-state";
 import { Tooltip } from "./ui";
@@ -51,62 +43,6 @@ function Cell({ label, children }: { label: string; children: ReactNode }) {
       <div className={VALUE_WRAPPER_CLASS}>{children}</div>
     </div>
   );
-}
-
-interface CreatedByDisplay {
-  glyph: ReactNode;
-  label: string;
-}
-
-function principalGlyph(icon: ReactNode) {
-  return (
-    <span className="grid size-5 place-items-center rounded-full bg-teal-500/20 text-teal-500">
-      {icon}
-    </span>
-  );
-}
-
-function createdByDisplay(actor: Principal): CreatedByDisplay {
-  switch (actor.kind) {
-    case "user": {
-      let glyph: ReactNode;
-      if (actor.avatar_url) {
-        glyph = (
-          <img
-            alt=""
-            src={actor.avatar_url}
-            className="size-5 rounded-full outline -outline-offset-1 outline-line-strong"
-          />
-        );
-      } else {
-        const initial = actor.login.charAt(0).toUpperCase() || "?";
-        glyph = (
-          <span className="grid size-5 place-items-center rounded-full bg-teal-500/20 font-mono text-[10px] font-medium text-teal-500">
-            {initial}
-          </span>
-        );
-      }
-      return { glyph, label: actor.login };
-    }
-    case "agent":
-      return { glyph: principalGlyph(<CpuChipIcon className="size-3" />), label: "agent" };
-    case "system":
-      return { glyph: principalGlyph(<Cog6ToothIcon className="size-3" />), label: "system" };
-    case "slack":
-      return {
-        glyph: principalGlyph(<ChatBubbleLeftEllipsisIcon className="size-3" />),
-        label: "slack",
-      };
-    case "webhook":
-      return { glyph: principalGlyph(<BoltIcon className="size-3" />), label: "webhook" };
-    case "worker":
-      return { glyph: principalGlyph(<ServerIcon className="size-3" />), label: "worker" };
-    case "anonymous":
-      return {
-        glyph: principalGlyph(<QuestionMarkCircleIcon className="size-3" />),
-        label: "anonymous",
-      };
-  }
 }
 
 export interface RunSummaryPanelViewProps {
@@ -156,7 +92,7 @@ export function RunSummaryPanelView({
   artifactsCount,
   artifactsLoading,
 }: RunSummaryPanelViewProps) {
-  const created = run?.created_by ? createdByDisplay(run.created_by) : null;
+  const created = run?.created_by ? principalDisplay(run.created_by) : null;
   const diff = run?.diff ?? null;
   const cost = formatUsdMicros(run?.billing?.total_usd_micros);
 

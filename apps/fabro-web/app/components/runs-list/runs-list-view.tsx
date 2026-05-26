@@ -152,6 +152,11 @@ export function RunsListView({
                   />
                 </th>
                 <SortHeader label="Status" sortKey="status" activeSort={sort} direction={direction} onClick={onSortClick} />
+                {show("created_by") && (
+                  <th scope="col" className="w-8 whitespace-nowrap px-3 py-2.5 font-medium">
+                    By
+                  </th>
+                )}
                 {show("repo") && (
                   <SortHeader label="Repo" sortKey="repo" activeSort={sort} direction={direction} onClick={onSortClick} />
                 )}
