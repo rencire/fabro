@@ -153,22 +153,16 @@ export function AutomationFormFields({
             className={INPUT_CLASS}
           />
         </Row>
-        <Row
-          title={<Label required>Slug</Label>}
-          help={
-            lockIdAndTarget ? (
-              "The slug cannot be changed after creation."
-            ) : (
+        {lockIdAndTarget ? null : (
+          <Row
+            title={<Label required>Slug</Label>}
+            help={
               <>
                 Identifier used in the URL:{" "}
                 <span className="font-mono text-fg-2">/automations/{values.id || "<slug>"}</span>
               </>
-            )
-          }
-        >
-          {lockIdAndTarget ? (
-            <div className="font-mono text-sm text-fg">{values.id}</div>
-          ) : (
+            }
+          >
             <input
               type="text"
               name="slug"
@@ -180,8 +174,8 @@ export function AutomationFormFields({
               spellCheck={false}
               className={`${INPUT_CLASS} font-mono`}
             />
-          )}
-        </Row>
+          </Row>
+        )}
         <Row title={<Label optional>Description</Label>} help="A short summary teammates will see when browsing automations.">
           <textarea
             name="description"
